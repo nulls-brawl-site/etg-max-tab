@@ -360,8 +360,14 @@ public final class MaxBridge {
             setIntField(filterTabs, "currentPosition", maxIndex);
             setIntField(filterTabs, "oldAnimatedTab", maxIndex);
             setBooleanField(filterTabs, "animatingIndicator", false);
-            notifyTabsChanged(filterTabs);
+            hardenFilterTabsDrawState(filterTabs, activity);
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView != null) {
+                listView.invalidate();
+            }
+            filterTabs.invalidate();
         }
+        hardenMaxTabVisualState(root, filterTabs, activity);
         showOverlay(activity, root, filterTabs, dialogsActivity, url);
         return "link: opened " + url;
     }
@@ -795,22 +801,17 @@ public final class MaxBridge {
     }
 
     private static void hardenMaxTabVisualState(View root, View filterTabs, Activity activity) {
+        hardenFilterTabsDrawState(filterTabs, activity);
+        if (root != null) {
+            root.post(() -> hardenFilterTabsDrawState(filterTabs, activity));
+            root.postDelayed(() -> hardenFilterTabsDrawState(filterTabs, activity), 80);
+            root.postDelayed(() -> hardenFilterTabsDrawState(filterTabs, activity), 240);
+        }
+    }
+
+    private static void hardenFilterTabsDrawState(View filterTabs, Activity activity) {
         ensureFilterTabsLockDrawable(filterTabs, activity);
         sanitizeMaxTabState(filterTabs);
-        if (root != null) {
-            root.post(() -> {
-                ensureFilterTabsLockDrawable(filterTabs, activity);
-                sanitizeMaxTabState(filterTabs);
-            });
-            root.postDelayed(() -> {
-                ensureFilterTabsLockDrawable(filterTabs, activity);
-                sanitizeMaxTabState(filterTabs);
-            }, 80);
-            root.postDelayed(() -> {
-                ensureFilterTabsLockDrawable(filterTabs, activity);
-                sanitizeMaxTabState(filterTabs);
-            }, 240);
-        }
     }
 
     private static void ensureFilterTabsLockDrawable(View filterTabs, Activity activity) {
@@ -873,17 +874,37 @@ public final class MaxBridge {
                 ViewGroup group = (ViewGroup) listView;
                 for (int i = 0; i < group.getChildCount(); i++) {
                     View child = group.getChildAt(i);
+                    ensureDrawableField(child, "icon");
+                    ensureDrawableField(child, "iconAnimateInDrawable");
+                    ensureDrawableField(child, "iconAnimateOutDrawable");
                     Object tab = getFieldObject(child, "currentTab");
                     if (isMaxTab(tab)) {
                         setBooleanField(tab, "isLocked", false);
                         setFloatField(child, "progressToLocked", 0f);
                         setFloatField(child, "locIconXOffset", 0f);
-                        child.invalidate();
                     }
+                    child.invalidate();
                 }
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void ensureDrawableField(Object target, String name) {
+        try {
+            Object value = getFieldObject(target, name);
+            if (!(value instanceof Drawable)) {
+                setObjectField(target, name, new ColorDrawable(Color.TRANSPARENT));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void showMaxOverlayFromTab(Activity activity, View root, View filterTabs, Object dialogsActivity) {
+        cancelRegularSelectionRepairs();
+        setMaxTabSelectionFields(filterTabs);
+        hardenMaxTabVisualState(root, filterTabs, activity);
+        showOverlay(activity, root, filterTabs, dialogsActivity);
     }
 
     private static final class MaxTabDelegateHandler implements InvocationHandler {
@@ -909,18 +930,15 @@ public final class MaxBridge {
             if ("didSelectTab".equals(name) && args != null && args.length > 0) {
                 if (isMaxTabView(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
-                    setMaxTabSelectionFields(filterTabs);
-                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
                 return method.invoke(original, args);
             }
             if ("onPageSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
-                    cancelRegularSelectionRepairs();
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
-                    setMaxTabSelectionFields(filterTabs);
-                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
                 int transitionGeneration = beginTabTransition();
@@ -938,7 +956,8 @@ public final class MaxBridge {
             }
             if ("onTabSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
-                    setMaxTabSelectionFields(filterTabs);
+                    rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
                 return method.invoke(original, args);
@@ -1166,7 +1185,12 @@ public final class MaxBridge {
             setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
             setIntField(filterTabs, "currentPosition", pos);
             setIntField(filterTabs, "oldAnimatedTab", pos);
-            notifyTabsChanged(filterTabs);
+            hardenFilterTabsDrawState(filterTabs, null);
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView != null) {
+                listView.invalidate();
+            }
+            filterTabs.invalidate();
             return true;
         } catch (Throwable ignored) {
             return false;
