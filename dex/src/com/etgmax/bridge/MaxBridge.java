@@ -290,7 +290,9 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
-                hideOverlay(root);
+                Object result = method.invoke(original, args);
+                closeOverlayAfterRegularSelection(root);
+                return result;
             }
             if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
@@ -298,7 +300,9 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
-                hideOverlay(root);
+                Object result = method.invoke(original, args);
+                closeOverlayAfterRegularSelection(root);
+                return result;
             }
             return method.invoke(original, args);
         }
@@ -572,6 +576,22 @@ public final class MaxBridge {
         }
     }
 
+    private static void closeOverlayAfterRegularSelection(View root) {
+        if (root instanceof ViewGroup) {
+            View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
+            if (overlay != null) {
+                destroyWebViews(overlay);
+                ((ViewGroup) root).removeView(overlay);
+            }
+            activeFilterTabs = null;
+            activeOriginalDelegate = null;
+            activeDelegateType = null;
+            restoreTabId = Integer.MIN_VALUE;
+            restorePosition = -1;
+            restoreFloatingButtons();
+        }
+    }
+
     private static void destroyWebViews(View view) {
         try {
             if (view instanceof WebView) {
@@ -640,15 +660,6 @@ public final class MaxBridge {
             }
         });
         webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                injectTelegramSkin(view);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                injectTelegramSkin(view);
-            }
         });
 
         int top = estimateTopMargin(parent, filterTabs);
@@ -698,59 +709,6 @@ public final class MaxBridge {
         }
         CookieManager.getInstance().setAcceptCookie(true);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
-    }
-
-    private static void injectTelegramSkin(WebView webView) {
-        String js = "(function(){"
-                + "if(window.__etgMaxSkinBooting)return;window.__etgMaxSkinBooting=1;"
-                + "var CSS='"
-                + ":root{--etg-tg-bg:#fff;--etg-tg-surface:#fff;--etg-tg-panel:#f5f7fa;--etg-tg-text:#111;--etg-tg-muted:#707579;--etg-tg-line:#e7e7e7;--etg-tg-accent:#3390ec;--etg-tg-out:#effdde;--etg-tg-in:#fff;--etg-tg-chat-bg:#d8e6d1;--bubbles-background-bubble:#fff;--bubbles-background-bubble-gradient-step-1:#fff;--bubbles-background-bubble-gradient-step-2:#fff;--bubbles-background-bubble-gradient-step-3:#fff;--bubbles-text-body:#111;--bubbles-text-body-secondary:#707579;--bubbles-text-time:#707579;--bubbles-text-link:#2481cc;--bubbles-icon-read-status:#3390ec;}"
-                + "[data-bubbles-variant=outgoing]{--bubbles-background-bubble:#effdde!important;--bubbles-background-bubble-gradient-step-1:#effdde!important;--bubbles-background-bubble-gradient-step-2:#effdde!important;--bubbles-background-bubble-gradient-step-3:#effdde!important;--bubbles-text-body:#111!important;--bubbles-text-time:#4fae4e!important;--bubbles-icon-read-status:#4fae4e!important;}"
-                + "[data-bubbles-variant=incoming]{--bubbles-background-bubble:#fff!important;--bubbles-background-bubble-gradient-step-1:#fff!important;--bubbles-background-bubble-gradient-step-2:#fff!important;--bubbles-background-bubble-gradient-step-3:#fff!important;--bubbles-text-body:#111!important;--bubbles-text-time:#707579!important;}"
-                + "html,body,#app{height:100%!important;width:100%!important;max-width:none!important;margin:0!important;background:var(--etg-tg-bg)!important;font-family:Roboto,Arial,sans-serif!important;color:var(--etg-tg-text)!important;letter-spacing:0!important;box-sizing:border-box!important;}"
-                + "*,*:before,*:after{box-sizing:border-box!important;}"
-                + "body{overflow:hidden!important;min-width:0!important;}"
-                + "button,input,textarea,select{font-family:Roboto,Arial,sans-serif!important;letter-spacing:0!important;}"
-                + "#app,main,[data-etg-max-root],.container{width:100%!important;max-width:none!important;min-width:0!important;background:var(--etg-tg-bg)!important;}"
-                + "[data-etg-max-list],[role=list],nav,aside,[class*=chatList],[class*=ChatList],[class*=conversationList],[class*=DialogList],.tabs-container{background:var(--etg-tg-surface)!important;border-right:1px solid var(--etg-tg-line)!important;box-shadow:none!important;}"
-                + "[data-etg-max-chat-row],[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog-item],[class*=conversation]{min-height:64px!important;border-radius:0!important;border-bottom:1px solid var(--etg-tg-line)!important;background:var(--etg-tg-surface)!important;color:var(--etg-tg-text)!important;transition:background .12s ease!important;}"
-                + "[data-etg-max-chat-row]:active,.chat-item:active,[data-etg-max-chat-row][aria-selected=true],.chat-item.selected{background:#eef6ff!important;}"
-                + ".chat-item{gap:12px!important;padding:8px 10px!important;}"
-                + ".chat-item .name,[data-etg-max-title]{font-size:16px!important;font-weight:500!important;color:var(--etg-tg-text)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}"
-                + ".chat-item .preview,[data-etg-max-preview],.preview{font-size:14px!important;color:var(--etg-tg-muted)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}"
-                + ".chat-item .time,.time,[data-etg-max-time]{font-size:12px!important;color:var(--etg-tg-muted)!important;}"
-                + ".badge,[data-etg-max-badge]{background:var(--etg-tg-accent)!important;color:#fff!important;border-radius:999px!important;min-width:20px!important;height:20px!important;padding:0 6px!important;font-size:12px!important;line-height:20px!important;text-align:center!important;}"
-                + "[data-etg-max-messages],[class*=messages],[class*=Messages],[class*=chat-background],[class*=ChatWindow]{background:var(--etg-tg-chat-bg)!important;width:100%!important;max-width:none!important;min-width:0!important;}"
-                + "[data-etg-max-bubble],.message-bubble,[data-bubbles-variant]{max-width:min(78%,480px)!important;padding:7px 10px!important;margin:2px 8px!important;box-shadow:0 1px 1px rgba(0,0,0,.12)!important;color:var(--bubbles-text-body,var(--etg-tg-text))!important;}"
-                + "[data-etg-max-out=1],.message-row.is-me .message-bubble,[data-bubbles-variant=outgoing]{background:var(--etg-tg-out)!important;border-radius:12px 12px 4px 12px!important;margin-left:auto!important;}"
-                + "[data-etg-max-out=0],.message-row:not(.is-me):not(.is-system) .message-bubble,[data-bubbles-variant=incoming]{background:var(--etg-tg-in)!important;border-radius:12px 12px 12px 4px!important;margin-right:auto!important;}"
-                + ".message-row,[data-etg-max-message-row]{display:flex!important;align-items:flex-start!important;width:100%!important;max-width:100%!important;margin:2px 0!important;padding:0 8px!important;}"
-                + ".message-row.is-me,[data-etg-max-message-row][data-etg-max-out-row=\"1\"]{justify-content:flex-end!important;align-items:flex-end!important;}"
-                + ".message-row.is-system .message-bubble{background:rgba(255,255,255,.55)!important;border-radius:999px!important;box-shadow:none!important;color:var(--etg-tg-muted)!important;}"
-                + "[data-etg-max-composer],form:has(textarea),form:has(input),[class*=composer],[class*=writebar],[class*=WriteBar]{background:var(--etg-tg-surface)!important;border-top:1px solid var(--etg-tg-line)!important;box-shadow:none!important;width:100%!important;max-width:none!important;min-width:0!important;}"
-                + "[data-etg-max-composer] textarea,[data-etg-max-composer] input,[data-etg-max-composer] [contenteditable=true]{width:100%!important;max-width:100%!important;min-width:0!important;}"
-                + ".tab,.tab-wrapper,[role=tab]{border-radius:999px!important;color:var(--etg-tg-muted)!important;}"
-                + "[aria-selected=true].tab,[role=tab][aria-selected=true]{background:#e7f1ff!important;color:var(--etg-tg-accent)!important;}"
-                + "';"
-                + "function addStyle(){var s=document.getElementById('etg-max-telegram-skin');if(!s){s=document.createElement('style');s.id='etg-max-telegram-skin';document.head.appendChild(s);}if(s.textContent!==CSS)s.textContent=CSS;}"
-                + "function hasAny(cls,arr){cls=(cls||'').toLowerCase();for(var i=0;i<arr.length;i++){if(cls.indexOf(arr[i])>-1)return true;}return false;}"
-                + "function mark(){try{addStyle();document.documentElement.dataset.etgMaxSkin='telegram';if(document.body)document.body.dataset.etgMax='1';"
-                + "var roots=document.querySelectorAll('#app,main,[class*=container]');for(var r=0;r<roots.length;r++){roots[r].setAttribute('data-etg-max-root','1');}"
-                + "var bubbles=document.querySelectorAll('[data-bubbles-variant],.message-bubble,[class*=bubble],[class*=Bubble]');for(var i=0;i<bubbles.length;i++){var b=bubbles[i];var v=(b.getAttribute('data-bubbles-variant')||'').toLowerCase();var c=b.className||'';b.setAttribute('data-etg-max-bubble','1');var out=(v.indexOf('out')>-1||hasAny(c,['outgoing','is-me','my-message']));if(out)b.setAttribute('data-etg-max-out','1');else if(v.indexOf('in')>-1||hasAny(c,['incoming']))b.setAttribute('data-etg-max-out','0');var row=b.closest('[class*=message],[class*=Message],[role=listitem]')||b.parentElement;if(row){row.setAttribute('data-etg-max-message-row','1');if(out)row.setAttribute('data-etg-max-out-row','1');}}"
-                + "var rows=document.querySelectorAll('[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog],[class*=Dialog],[class*=conversation],[class*=Conversation]');for(var j=0;j<rows.length;j++){var e=rows[j];var t=(e.textContent||'').trim();if(t.length>0&&t.length<600){e.setAttribute('data-etg-max-chat-row','1');}}"
-                + "var lists=document.querySelectorAll('[role=list],aside,nav,[class*=list],[class*=List]');for(var k=0;k<lists.length;k++){lists[k].setAttribute('data-etg-max-list','1');}"
-                + "var composers=document.querySelectorAll('form,footer,[class*=composer],[class*=writebar],[class*=WriteBar]');for(var m=0;m<composers.length;m++){var q=composers[m];if(q.querySelector('textarea,input,[contenteditable=true]'))q.setAttribute('data-etg-max-composer','1');}"
-                + "var links=document.querySelectorAll('a,button,[role=button]');for(var n=0;n<links.length;n++){links[n].style.webkitTapHighlightColor='transparent';}"
-                + "}catch(e){window.__etgMaxSkinError=String(e);}}"
-                + "function installWsProbe(){if(window.__etgMaxWsProbe||!window.WebSocket)return;window.__etgMaxWsProbe=1;var NativeWS=window.WebSocket;function WrappedWS(url,protocols){var ws=protocols!==undefined?new NativeWS(url,protocols):new NativeWS(url);try{ws.addEventListener('message',function(ev){window.__etgMaxLastPacketAt=Date.now();setTimeout(mark,0);});}catch(e){}return ws;}WrappedWS.prototype=NativeWS.prototype;WrappedWS.CONNECTING=NativeWS.CONNECTING;WrappedWS.OPEN=NativeWS.OPEN;WrappedWS.CLOSING=NativeWS.CLOSING;WrappedWS.CLOSED=NativeWS.CLOSED;window.WebSocket=WrappedWS;}"
-                + "mark();installWsProbe();if(!window.__etgMaxObserver){window.__etgMaxObserver=new MutationObserver(function(){clearTimeout(window.__etgMaxMarkTimer);window.__etgMaxMarkTimer=setTimeout(mark,60);});window.__etgMaxObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','data-bubbles-variant','aria-selected']});}"
-                + "window.__etgMaxSkinBooting=0;"
-                + "})();";
-        if (Build.VERSION.SDK_INT >= 19) {
-            webView.evaluateJavascript(js, null);
-        } else {
-            webView.loadUrl("javascript:" + js);
-        }
     }
 
     private static int estimateTopMargin(ViewGroup root, View filterTabs) {
