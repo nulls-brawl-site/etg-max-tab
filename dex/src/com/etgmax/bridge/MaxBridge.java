@@ -1602,14 +1602,9 @@ public final class MaxBridge {
                     if (selectedId != Integer.MIN_VALUE && findTabPositionById(currentFilterTabs, selectedId) >= 0) {
                         nonMaxFrames[0]++;
                         if (nonMaxFrames[0] >= 2) {
-                            int maxIndex = findTabPositionById(currentFilterTabs, MAX_TAB_ID);
-                            if (maxIndex >= 0) {
-                                setIntField(currentFilterTabs, "selectedTabId", MAX_TAB_ID);
-                                setIntField(currentFilterTabs, "currentPosition", maxIndex);
-                                setIntField(currentFilterTabs, "oldAnimatedTab", maxIndex);
-                                setBooleanField(currentFilterTabs, "animatingIndicator", false);
-                                notifyTabsChanged(currentFilterTabs);
-                            }
+                            closeOverlayAfterRegularSelection(root);
+                            scheduleRegularSelectionRepair(dialogsActivity, root, selectedId);
+                            return;
                         }
                     } else {
                         nonMaxFrames[0] = 0;
