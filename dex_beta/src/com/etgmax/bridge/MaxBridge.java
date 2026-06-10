@@ -49,8 +49,19 @@ public final class MaxBridge {
     private static int restoreTabId = Integer.MIN_VALUE;
     private static int restorePosition = -1;
     private static View systemBarsDecor;
+    private static android.view.Window systemBarsWindow;
     private static int previousSystemUiVisibility;
+    private static int previousStatusBarColor;
+    private static int previousNavigationBarColor;
+    private static boolean previousBarColorsSaved;
     private static boolean systemBarsHidden;
+    private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LOW_PROFILE;
 
     private MaxBridge() {
     }
@@ -1753,6 +1764,15 @@ public final class MaxBridge {
         int inBubble = nonZeroColor(resolveThemeColor("key_chat_inBubble", dark ? 0xff1d1f21 : 0xffffffff),
                 dark ? 0xff1d1f21 : 0xffffffff);
         int outBubble = nonZeroColor(resolveThemeColor("key_chat_outBubble", accent), accent);
+        int inText = nonZeroColor(resolveThemeColor("key_chat_messageTextIn", text), text);
+        int outText = nonZeroColor(resolveThemeColor("key_chat_messageTextOut", contrastTextColor(outBubble)),
+                contrastTextColor(outBubble));
+        int inTimeText = nonZeroColor(resolveThemeColor("key_chat_inTimeText", mixColors(inText, inBubble, 0.38f)),
+                mixColors(inText, inBubble, 0.38f));
+        int outTimeText = nonZeroColor(resolveThemeColor("key_chat_outTimeText", mixColors(outText, outBubble, 0.34f)),
+                mixColors(outText, outBubble, 0.34f));
+        int inLink = nonZeroColor(resolveThemeColor("key_chat_messageLinkIn", accent), accent);
+        int outLink = nonZeroColor(resolveThemeColor("key_chat_messageLinkOut", outText), outText);
         int outBubble1 = nonZeroColor(resolveThemeColor("key_chat_outBubbleGradient1", outBubble), outBubble);
         int outBubble2 = nonZeroColor(resolveThemeColor("key_chat_outBubbleGradient2", outBubble), outBubble);
         int outBubble3 = nonZeroColor(resolveThemeColor("key_chat_outBubbleGradient3", outBubble2), outBubble2);
@@ -1761,24 +1781,59 @@ public final class MaxBridge {
         int wallpaperTo1 = resolveThemeColor("key_chat_wallpaper_gradient_to1", 0);
         int wallpaperTo2 = resolveThemeColor("key_chat_wallpaper_gradient_to2", 0);
         int wallpaperTo3 = resolveThemeColor("key_chat_wallpaper_gradient_to3", 0);
+        int bgSecondary = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.08f : 0.035f);
+        int bgTertiary = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.07f);
+        int bgCard = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.05f : 0.025f);
+        int bgSurface = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.03f : 0.02f);
+        int bgHover = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.12f : 0.055f);
+        int bgPressed = mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.18f : 0.095f);
+        int bgSelected = mixColors(accent, bg, dark ? 0.76f : 0.86f);
+        int stroke = mixColors(text, bg, dark ? 0.74f : 0.86f);
+        int strokeSecondary = mixColors(text, bg, dark ? 0.84f : 0.92f);
+        int primaryHover = mixColors(accent, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.08f);
+        int primaryPressed = mixColors(accent, dark ? Color.WHITE : Color.BLACK, dark ? 0.16f : 0.14f);
+        int buttonText = contrastTextColor(accent);
+        int positive = nonZeroColor(resolveThemeColor("key_text_RedRegular", dark ? 0xffff6262 : 0xffd93025),
+                dark ? 0xffff6262 : 0xffd93025);
+        int negative = positive;
+        int online = nonZeroColor(resolveThemeColor("key_chats_onlineCircle", dark ? 0xff5ecf72 : 0xff2ba84a),
+                dark ? 0xff5ecf72 : 0xff2ba84a);
 
         TelegramThemeSnapshot s = new TelegramThemeSnapshot();
         s.dark = dark;
         s.bg = cssColor(bg);
-        s.bgSecondary = cssColor(mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.08f : 0.035f));
-        s.bgTertiary = cssColor(mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.07f));
-        s.bgCard = cssColor(mixColors(bg, dark ? Color.WHITE : Color.BLACK, dark ? 0.05f : 0.025f));
+        s.bgSecondary = cssColor(bgSecondary);
+        s.bgTertiary = cssColor(bgTertiary);
+        s.bgCard = cssColor(bgCard);
+        s.bgSurface = cssColor(bgSurface);
+        s.bgHover = cssColor(bgHover);
+        s.bgPressed = cssColor(bgPressed);
+        s.bgSelected = cssColor(bgSelected);
+        s.bgOverlay = rgbaColor(Color.BLACK, dark ? 0.54f : 0.32f);
+        s.bgOverlayHard = rgbaColor(Color.BLACK, dark ? 0.76f : 0.58f);
         s.text = cssColor(text);
         s.textSecondary = cssColor(mixColors(text, bg, 0.35f));
         s.textTertiary = cssColor(muted);
+        s.textDisabled = rgbaColor(text, dark ? 0.34f : 0.30f);
+        s.textInverse = cssColor(contrastTextColor(bg));
+        s.buttonText = cssColor(buttonText);
         s.hint = cssColor(panelHint);
         s.accent = cssColor(accent);
+        s.accentHover = cssColor(primaryHover);
+        s.accentPressed = cssColor(primaryPressed);
+        s.accentFade = rgbaColor(accent, dark ? 0.20f : 0.13f);
         s.actionBar = cssColor(actionBar);
         s.actionTitle = cssColor(actionTitle);
         s.panel = cssColor(panel);
         s.panelText = cssColor(panelText);
         s.inBubble = cssColor(inBubble);
         s.outBubble = cssColor(outBubble);
+        s.inText = cssColor(inText);
+        s.outText = cssColor(outText);
+        s.inTimeText = cssColor(inTimeText);
+        s.outTimeText = cssColor(outTimeText);
+        s.inLink = cssColor(inLink);
+        s.outLink = cssColor(outLink);
         s.outBubble1 = cssColor(outBubble1);
         s.outBubble2 = cssColor(outBubble2);
         s.outBubble3 = cssColor(outBubble3);
@@ -1787,6 +1842,18 @@ public final class MaxBridge {
         s.wallpaperTo2 = cssColor(wallpaperTo2 != 0 ? wallpaperTo2 : mixColors(wallpaper, actionBar, 0.22f));
         s.wallpaperTo3 = cssColor(wallpaperTo3 != 0 ? wallpaperTo3 : mixColors(wallpaper, dark ? Color.BLACK : Color.WHITE, 0.12f));
         s.divider = rgbaColor(text, dark ? 0.16f : 0.10f);
+        s.dividerStrong = rgbaColor(text, dark ? 0.25f : 0.16f);
+        s.stroke = cssColor(stroke);
+        s.strokeSecondary = cssColor(strokeSecondary);
+        s.strokeTransparent = rgbaColor(text, dark ? 0.12f : 0.08f);
+        s.positive = cssColor(online);
+        s.positiveFade = rgbaColor(online, dark ? 0.20f : 0.13f);
+        s.negative = cssColor(negative);
+        s.negativeFade = rgbaColor(negative, dark ? 0.20f : 0.13f);
+        s.capsule = rgbaColor(Color.BLACK, dark ? 0.34f : 0.18f);
+        s.counter = cssColor(accent);
+        s.reaction = rgbaColor(bgTertiary, dark ? 0.92f : 0.96f);
+        s.sferumCard = cssColor(mixColors(accent, bg, dark ? 0.78f : 0.88f));
         s.shadow = rgbaColor(Color.BLACK, dark ? 0.32f : 0.13f);
         s.wallpaperImage = renderTelegramWallpaperDataUrl(anchor, context, wallpaper);
         return s;
@@ -1848,67 +1915,339 @@ public final class MaxBridge {
 
     private static String buildTelegramThemeCss(TelegramThemeSnapshot t) {
         String wallpaperImage = t.wallpaperImage != null ? "url(\"" + t.wallpaperImage + "\")" : "none";
-        return ":root,[data-etg-max-theme]{"
-                + "color-scheme:" + (t.dark ? "dark" : "light") + "!important;"
-                + "--background-primary:" + t.bg + "!important;"
-                + "--background-secondary:" + t.bgSecondary + "!important;"
-                + "--background-tertiary:" + t.bgTertiary + "!important;"
-                + "--background-card:" + t.bgCard + "!important;"
-                + "--background-surface:" + t.bgSecondary + "!important;"
-                + "--divider-primary:" + t.divider + "!important;"
-                + "--divider-secondary:" + t.divider + "!important;"
-                + "--text-primary:" + t.text + "!important;"
-                + "--text-secondary:" + t.textSecondary + "!important;"
-                + "--text-tertiary:" + t.textTertiary + "!important;"
-                + "--text-mute:" + t.textTertiary + "!important;"
-                + "--text-themed:" + t.accent + "!important;"
-                + "--icon-primary:" + t.text + "!important;"
-                + "--icon-secondary:" + t.textSecondary + "!important;"
-                + "--icon-tertiary:" + t.textTertiary + "!important;"
-                + "--icon-themed:" + t.accent + "!important;"
-                + "--button-primary:" + t.accent + "!important;"
-                + "--button-secondary:" + t.bgTertiary + "!important;"
-                + "--button-positive:" + t.accent + "!important;"
-                + "--stroke-themed:" + t.accent + "!important;"
-                + "--shadow-elevation-3-primary:" + t.shadow + "!important;"
-                + "--shadow-elevation-3-secondary:" + t.shadow + "!important;"
-                + "--chat-background-background-step-1:" + t.wallpaper + "!important;"
-                + "--chat-background-background-step-2:" + t.wallpaperTo1 + "!important;"
-                + "--chat-background-additional-step-1:" + t.wallpaperTo1 + "!important;"
-                + "--chat-background-additional-step-2:" + t.wallpaperTo2 + "!important;"
-                + "--chat-background-additional-step-3:" + t.wallpaperTo3 + "!important;"
-                + "--chat-background-additional-step-4:" + t.wallpaperTo2 + "!important;"
-                + "--chat-background-additional-step-5:" + t.wallpaperTo1 + "!important;"
-                + "--chat-background-additional-step-6:" + t.wallpaper + "!important;"
-                + "--chat-background-pattern-gradient-step-1:" + t.wallpaper + "!important;"
-                + "--chat-background-pattern-gradient-step-2:" + t.wallpaperTo1 + "!important;"
-                + "--bubbles-background-bubble:" + t.inBubble + "!important;"
-                + "--bubbles-background-bubble-gradient-step-1:" + t.outBubble1 + "!important;"
-                + "--bubbles-background-bubble-gradient-step-2:" + t.outBubble2 + "!important;"
-                + "--bubbles-background-bubble-gradient-step-3:" + t.outBubble3 + "!important;"
-                + "--bubbles-background-surface-secondary:" + t.inBubble + "!important;"
-                + "--bubbles-background-action:" + t.accent + "!important;"
-                + "--bubbles-background-action-secondary:" + t.bgTertiary + "!important;"
-                + "--bubbles-text-body:" + t.text + "!important;"
-                + "--bubbles-text-body-secondary:" + t.textSecondary + "!important;"
-                + "--bubbles-text-action:" + t.accent + "!important;"
-                + "--bubbles-text-link:" + t.accent + "!important;"
-                + "--bubbles-icon-action:" + t.accent + "!important;"
-                + "--bubbles-icon-read-status:" + t.accent + "!important;"
-                + "--etg-max-wallpaper-image:" + wallpaperImage + ";"
-                + "--etg-max-wallpaper-gradient:linear-gradient(135deg," + t.wallpaper + "," + t.wallpaperTo1 + " 55%," + t.wallpaperTo2 + ")!important;"
-                + "}"
-                + "html,body,#app,.app{background:" + t.bg + "!important;color:" + t.text + "!important;}"
-                + "aside,.aside,.navigation,.folders,.tabs,.header,.modal,.actionsMenu,.popoverMobileSheet{background:" + t.bg + "!important;color:" + t.text + "!important;}"
-                + ".search,.input,input,textarea,[contenteditable=true]{background:" + t.bgTertiary + "!important;color:" + t.panelText + "!important;caret-color:" + t.accent + "!important;}"
-                + ".field::placeholder,input::placeholder,textarea::placeholder{color:" + t.hint + "!important;}"
-                + ".button--active,.tab--active,.active-slide{color:" + t.accent + "!important;}"
-                + ".background.svelte-1afbb1c,.layer-base.svelte-1afbb1c,.layer-additional.svelte-1afbb1c,.layer-pattern.svelte-1afbb1c{"
-                + "background-image:var(--etg-max-wallpaper-image),var(--etg-max-wallpaper-gradient)!important;"
-                + "background-size:cover,cover!important;background-position:center!important;background-repeat:repeat!important;opacity:1!important;}"
-                + ".container.svelte-fxkkld .message{background:" + rgbaColor(Color.BLACK, t.dark ? 0.24f : 0.12f) + "!important;color:" + t.text + "!important;}"
-                + ".cell,.item,.actionsMenuItem{background-color:transparent!important;}"
-                + ".cell:hover,.item:hover,.actionsMenuItem:not(:disabled):hover{background-color:" + t.bgSecondary + "!important;}";
+        StringBuilder css = new StringBuilder(22000);
+        css.append(":root,html[data-etg-max-theme],html[data-etg-max-theme] body,html[data-etg-max-theme] body *{");
+        css.append("color-scheme:").append(t.dark ? "dark" : "light").append("!important;");
+        appendCssVar(css, "background-primary", t.bg);
+        appendCssVar(css, "background-secondary", t.bgSecondary);
+        appendCssVar(css, "background-tertiary", t.bgTertiary);
+        appendCssVar(css, "background-card", t.bgCard);
+        appendCssVar(css, "background-surface", t.bgSurface);
+        appendCssVar(css, "background-overlay", t.bgOverlay);
+        appendCssVar(css, "background-overlay-hard", t.bgOverlayHard);
+        appendCssVar(css, "background-overlay-secondary", t.bgOverlay);
+        appendCssVar(css, "background-overlay-media-preview", t.bgOverlayHard);
+        appendCssVar(css, "background-sticky", t.bg);
+        appendCssVar(css, "input-background", t.bgTertiary);
+        appendCssVar(css, "fading-background-primary-step-1", rgbaColor(Color.TRANSPARENT, 0f));
+        appendCssVar(css, "fading-background-primary-step-2", t.bg);
+        appendCssVar(css, "fading-background-surface-step-1", rgbaColor(Color.TRANSPARENT, 0f));
+        appendCssVar(css, "fading-background-surface-step-2", t.bgSurface);
+        appendCssVar(css, "divider-primary", t.divider);
+        appendCssVar(css, "divider-primary-ghost", t.strokeTransparent);
+        appendCssVar(css, "divider-secondary", t.divider);
+        appendCssVar(css, "divider-contrast", t.dividerStrong);
+        appendCssVar(css, "stroke-themed", t.accent);
+        appendCssVar(css, "stroke-primary-carver", t.stroke);
+        appendCssVar(css, "stroke-secondary", t.strokeSecondary);
+        appendCssVar(css, "stroke-tertiary", t.strokeTransparent);
+        appendCssVar(css, "stroke-transparent", t.strokeTransparent);
+        appendCssVar(css, "stroke-primary-inverse-static", t.buttonText);
+        appendCssVar(css, "stroke-secondary-inverse-static", t.buttonText);
+        appendCssVar(css, "stroke-card-carver", t.strokeTransparent);
+        appendCssVar(css, "float-primary-flat", t.bgCard);
+        appendCssVar(css, "float-surface-flat", t.bgSurface);
+        appendCssVar(css, "float-popup-flat", t.bgCard);
+        appendCssVar(css, "float-modal", t.bgCard);
+        appendCssVar(css, "float-popup-blur", rgbaColor(Color.WHITE, t.dark ? 0.18f : 0.42f));
+        appendCssVar(css, "float-fab-flat", t.accent);
+        appendCssVar(css, "float-scroll-bar", rgbaColor(Color.WHITE, t.dark ? 0.20f : 0.38f));
+        appendCssVar(css, "float-stroke", t.strokeTransparent);
+        appendCssVar(css, "text-primary", t.text);
+        appendCssVar(css, "text-secondary", t.textSecondary);
+        appendCssVar(css, "text-tertiary", t.textTertiary);
+        appendCssVar(css, "text-mute", t.textTertiary);
+        appendCssVar(css, "text-themed", t.accent);
+        appendCssVar(css, "text-primary-static", t.text);
+        appendCssVar(css, "text-primary-inverse", t.textInverse);
+        appendCssVar(css, "text-primary-inverse-static", t.buttonText);
+        appendCssVar(css, "text-secondary-inverse-static", t.buttonText);
+        appendCssVar(css, "text-mute-inverse-static", t.buttonText);
+        appendCssVar(css, "text-positive", t.positive);
+        appendCssVar(css, "text-negative", t.negative);
+        appendCssVar(css, "text-attention", t.negative);
+        appendCssVar(css, "icon-primary", t.text);
+        appendCssVar(css, "icon-secondary", t.textSecondary);
+        appendCssVar(css, "icon-tertiary", t.textTertiary);
+        appendCssVar(css, "icon-mute", t.textTertiary);
+        appendCssVar(css, "icon-themed", t.accent);
+        appendCssVar(css, "icon-primary-static", t.text);
+        appendCssVar(css, "icon-primary-inverse", t.textInverse);
+        appendCssVar(css, "icon-primary-inverse-static", t.buttonText);
+        appendCssVar(css, "icon-secondary-inverse-static", t.buttonText);
+        appendCssVar(css, "icon-mute-inverse-static", t.buttonText);
+        appendCssVar(css, "icon-positive", t.positive);
+        appendCssVar(css, "icon-negative", t.negative);
+        appendCssVar(css, "button-primary", t.accent);
+        appendCssVar(css, "button-primary-contrast", t.bgTertiary);
+        appendCssVar(css, "button-secondary", t.bgTertiary);
+        appendCssVar(css, "button-secondary-contrast", t.bgTertiary);
+        appendCssVar(css, "button-overlay", rgbaColor(Color.WHITE, t.dark ? 0.14f : 0.70f));
+        appendCssVar(css, "button-positive", t.positive);
+        appendCssVar(css, "button-positive-fade", t.positiveFade);
+        appendCssVar(css, "button-negative", t.negative);
+        appendCssVar(css, "button-negative-fade", t.negativeFade);
+        appendCssVar(css, "button-text-color", t.buttonText);
+        appendCssVar(css, "button-text-color-disabled", t.textDisabled);
+        appendCssVar(css, "button-text-color-hovered", t.buttonText);
+        appendCssVar(css, "button-text-color-pressed", t.buttonText);
+        appendCssVar(css, "button-background-color", t.bgTertiary);
+        appendCssVar(css, "button-background-color-disabled", t.bgSecondary);
+        appendCssVar(css, "button-background-color-hovered", t.bgHover);
+        appendCssVar(css, "button-background-color-pressed", t.bgPressed);
+        appendCssVar(css, "button-background-active", t.accent);
+        appendCssVar(css, "button-stroke", t.strokeTransparent);
+        appendCssVar(css, "button-stroke-active", t.accent);
+        appendCssVar(css, "tool-button-background-color", t.bgTertiary);
+        appendCssVar(css, "tool-button-background-color-disabled", t.bgSecondary);
+        appendCssVar(css, "tool-button-background-color-hovered", t.bgHover);
+        appendCssVar(css, "tool-button-background-color-pressed", t.bgPressed);
+        appendCssVar(css, "tool-button-text-color", t.text);
+        appendCssVar(css, "tool-button-text-color-disabled", t.textDisabled);
+        appendCssVar(css, "tool-button-text-color-hovered", t.text);
+        appendCssVar(css, "tool-button-text-color-pressed", t.text);
+        appendCssVar(css, "states-background-card-hover", t.bgHover);
+        appendCssVar(css, "states-background-card-pressed", t.bgPressed);
+        appendCssVar(css, "states-background-card-selected", t.bgSelected);
+        appendCssVar(css, "states-background-card-selected-hover", mixCssAlpha(t.accent, t.dark ? 0.26f : 0.17f));
+        appendCssVar(css, "states-background-card-selected-pressed", mixCssAlpha(t.accent, t.dark ? 0.32f : 0.22f));
+        appendCssVar(css, "states-background-card-disabled", t.bgSecondary);
+        appendCssVar(css, "states-background-highlighted", t.accentFade);
+        appendCssVar(css, "states-button-primary-hover", t.accentHover);
+        appendCssVar(css, "states-button-primary-pressed", t.accentPressed);
+        appendCssVar(css, "states-button-primary-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-primary-contrast-hover", t.bgHover);
+        appendCssVar(css, "states-button-primary-contrast-pressed", t.bgPressed);
+        appendCssVar(css, "states-button-primary-contrast-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-secondary-hover", t.bgHover);
+        appendCssVar(css, "states-button-secondary-pressed", t.bgPressed);
+        appendCssVar(css, "states-button-secondary-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-secondary-contrast-hover", t.bgHover);
+        appendCssVar(css, "states-button-secondary-contrast-pressed", t.bgPressed);
+        appendCssVar(css, "states-button-secondary-contrast-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-ghost-hover", t.bgHover);
+        appendCssVar(css, "states-button-ghost-pressed", t.bgPressed);
+        appendCssVar(css, "states-button-ghost-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-overlay-hover", rgbaColor(Color.WHITE, t.dark ? 0.20f : 0.78f));
+        appendCssVar(css, "states-button-overlay-pressed", rgbaColor(Color.WHITE, t.dark ? 0.26f : 0.86f));
+        appendCssVar(css, "states-button-overlay-disabled", rgbaColor(Color.WHITE, t.dark ? 0.08f : 0.42f));
+        appendCssVar(css, "states-button-positive-hover", t.positive);
+        appendCssVar(css, "states-button-positive-pressed", t.positive);
+        appendCssVar(css, "states-button-positive-disabled", t.bgSecondary);
+        appendCssVar(css, "states-button-negative-hover", t.negative);
+        appendCssVar(css, "states-button-negative-pressed", t.negative);
+        appendCssVar(css, "states-button-negative-disabled", t.bgSecondary);
+        appendCssVar(css, "states-text-primary-hover", t.text);
+        appendCssVar(css, "states-text-primary-pressed", t.text);
+        appendCssVar(css, "states-text-primary-disabled", t.textDisabled);
+        appendCssVar(css, "states-text-secondary-hover", t.textSecondary);
+        appendCssVar(css, "states-text-secondary-pressed", t.textSecondary);
+        appendCssVar(css, "states-text-secondary-disabled", t.textDisabled);
+        appendCssVar(css, "states-text-themed-hover", t.accentHover);
+        appendCssVar(css, "states-text-themed-pressed", t.accentPressed);
+        appendCssVar(css, "states-text-themed-disabled", t.textDisabled);
+        appendCssVar(css, "states-icon-primary-hover", t.text);
+        appendCssVar(css, "states-icon-primary-pressed", t.text);
+        appendCssVar(css, "states-icon-primary-disabled", t.textDisabled);
+        appendCssVar(css, "states-icon-secondary-hover", t.textSecondary);
+        appendCssVar(css, "states-icon-secondary-pressed", t.textSecondary);
+        appendCssVar(css, "states-icon-secondary-disabled", t.textDisabled);
+        appendCssVar(css, "states-icon-tertiary-hover", t.textSecondary);
+        appendCssVar(css, "states-icon-tertiary-pressed", t.textSecondary);
+        appendCssVar(css, "states-icon-tertiary-disabled", t.textDisabled);
+        appendCssVar(css, "states-icon-themed-hover", t.accentHover);
+        appendCssVar(css, "states-icon-themed-pressed", t.accentPressed);
+        appendCssVar(css, "states-icon-themed-disabled", t.textDisabled);
+        appendCssVar(css, "tabbar-active", t.accent);
+        appendCssVar(css, "tabbar-inactive", t.textTertiary);
+        appendCssVar(css, "tabbar", t.bg);
+        appendCssVar(css, "counter-default", t.bgTertiary);
+        appendCssVar(css, "counter-background", t.counter);
+        appendCssVar(css, "counter-color", t.buttonText);
+        appendCssVar(css, "counter-themed", t.counter);
+        appendCssVar(css, "counter-contrast", t.counter);
+        appendCssVar(css, "counter-menu", t.counter);
+        appendCssVar(css, "counter-mute", t.bgTertiary);
+        appendCssVar(css, "counter-attention", t.negative);
+        appendCssVar(css, "capsule-outside", t.capsule);
+        appendCssVar(css, "capsule-background", t.capsule);
+        appendCssVar(css, "capsule-secondary", t.bgTertiary);
+        appendCssVar(css, "common-background-capsule", t.capsule);
+        appendCssVar(css, "common-text-capsule", t.text);
+        appendCssVar(css, "chat-background-background-step-1", t.wallpaper);
+        appendCssVar(css, "chat-background-background-step-2", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-additional-step-1", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-additional-step-2", t.wallpaperTo2);
+        appendCssVar(css, "chat-background-additional-step-3", t.wallpaperTo3);
+        appendCssVar(css, "chat-background-additional-step-4", t.wallpaperTo2);
+        appendCssVar(css, "chat-background-additional-step-5", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-additional-step-6", t.wallpaper);
+        appendCssVar(css, "chat-background-pattern-step-1", t.wallpaper);
+        appendCssVar(css, "chat-background-pattern-step-2", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-pattern-step-3", t.wallpaperTo2);
+        appendCssVar(css, "chat-background-pattern-step-4", t.wallpaperTo3);
+        appendCssVar(css, "chat-background-pattern-step-5", t.wallpaperTo2);
+        appendCssVar(css, "chat-background-pattern-step-6", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-pattern-gradient-step-1", t.wallpaper);
+        appendCssVar(css, "chat-background-pattern-gradient-step-2", t.wallpaperTo1);
+        appendCssVar(css, "chat-background-pattern-color", rgbaColor(Color.WHITE, t.dark ? 0.07f : 0.13f));
+        appendCssVar(css, "chat-pattern-icon", rgbaColor(Color.WHITE, t.dark ? 0.08f : 0.16f));
+        appendCssVar(css, "bubbles-background-bubble", t.inBubble);
+        appendCssVar(css, "bubbles-background-bubble-gradient-step-1", t.outBubble1);
+        appendCssVar(css, "bubbles-background-bubble-gradient-step-2", t.outBubble2);
+        appendCssVar(css, "bubbles-background-bubble-gradient-step-3", t.outBubble3);
+        appendCssVar(css, "bubbles-background-bubble-gradient-old-step-1", t.outBubble1);
+        appendCssVar(css, "bubbles-background-bubble-gradient-old-step-2", t.outBubble2);
+        appendCssVar(css, "bubbles-background-surface-secondary", t.inBubble);
+        appendCssVar(css, "bubbles-states-background-hovered-surface-secondary", t.bgHover);
+        appendCssVar(css, "bubbles-states-background-pressed-surface-secondary", t.bgPressed);
+        appendCssVar(css, "bubbles-background-action", t.accent);
+        appendCssVar(css, "bubbles-background-action-secondary", t.bgTertiary);
+        appendCssVar(css, "bubbles-background-action-fade", t.accentFade);
+        appendCssVar(css, "bubbles-background-text-focus", t.accentFade);
+        appendCssVar(css, "bubbles-background-mention", t.accentFade);
+        appendCssVar(css, "bubbles-background-mention-pressed", t.bgPressed);
+        appendCssVar(css, "bubbles-background-reaction", t.reaction);
+        appendCssVar(css, "bubbles-background-reaction-inside-my", t.reaction);
+        appendCssVar(css, "bubbles-background-reaction-inside-others", t.reaction);
+        appendCssVar(css, "bubbles-background-reaction-outside-my", t.reaction);
+        appendCssVar(css, "bubbles-background-reaction-outside-others", t.reaction);
+        appendCssVar(css, "bubbles-background-bot-button-default", t.bgTertiary);
+        appendCssVar(css, "bubbles-background-bot-button-hovered", t.bgHover);
+        appendCssVar(css, "bubbles-background-bot-button-pressed", t.bgPressed);
+        appendCssVar(css, "bubbles-background-bot-button-loading", t.bgSecondary);
+        appendCssVar(css, "bubbles-background-icon-item", t.bgTertiary);
+        appendCssVar(css, "bubbles-background-icon-item-negative", t.negativeFade);
+        appendCssVar(css, "bubbles-system-step-1", t.bgCard);
+        appendCssVar(css, "bubbles-system-step-2", t.bgTertiary);
+        appendCssVar(css, "bubbles-system-step-3", t.bgSecondary);
+        appendCssVar(css, "bubbles-system-stroke-step-1", t.strokeTransparent);
+        appendCssVar(css, "bubbles-system-stroke-step-2", t.stroke);
+        appendCssVar(css, "bubbles-system-stroke-fade-step-1", t.strokeTransparent);
+        appendCssVar(css, "bubbles-system-stroke-fade-step-2", t.strokeSecondary);
+        appendCssVar(css, "bubbles-system-button-themed", t.accent);
+        appendCssVar(css, "states-bubbles-system-button-themed-hover", t.accentHover);
+        appendCssVar(css, "states-bubbles-system-button-themed-pressed", t.accentPressed);
+        appendCssVar(css, "states-bubbles-system-button-themed-disabled", t.bgSecondary);
+        appendCssVar(css, "bubbles-system-icon-themed-contrast", t.buttonText);
+        appendCssVar(css, "bubbles-text-body", t.inText);
+        appendCssVar(css, "bubbles-text-body-secondary", t.textSecondary);
+        appendCssVar(css, "bubbles-text-action", t.accent);
+        appendCssVar(css, "bubbles-text-action-fade", t.accentFade);
+        appendCssVar(css, "bubbles-text-link", t.inLink);
+        appendCssVar(css, "bubbles-text-md-link", t.inLink);
+        appendCssVar(css, "bubbles-text-link-underline", t.inLink);
+        appendCssVar(css, "bubbles-text-time", t.inTimeText);
+        appendCssVar(css, "bubbles-text-author", t.accent);
+        appendCssVar(css, "bubbles-text-forward-label", t.textSecondary);
+        appendCssVar(css, "bubbles-text-forward-name", t.accent);
+        appendCssVar(css, "bubbles-text-reply-body", t.textSecondary);
+        appendCssVar(css, "bubbles-text-reply-name", t.accent);
+        appendCssVar(css, "bubbles-text-reaction", t.text);
+        appendCssVar(css, "bubbles-text-reaction-my", t.text);
+        appendCssVar(css, "bubbles-text-reaction-inside-my", t.text);
+        appendCssVar(css, "bubbles-text-reaction-inside-others", t.text);
+        appendCssVar(css, "bubbles-text-reaction-outside-my", t.text);
+        appendCssVar(css, "bubbles-text-reaction-outside-others", t.text);
+        appendCssVar(css, "bubbles-icon-action", t.accent);
+        appendCssVar(css, "bubbles-icon-action-secondary", t.textSecondary);
+        appendCssVar(css, "bubbles-icon-icon-item", t.textTertiary);
+        appendCssVar(css, "bubbles-icon-read-status", t.accent);
+        appendCssVar(css, "bubbles-icon-read-status-capsule", t.accent);
+        appendCssVar(css, "bubbles-icon-reply", t.accent);
+        appendCssVar(css, "bubbles-icon-reply-forwarded", t.accent);
+        appendCssVar(css, "bubbles-icon-alert", t.negative);
+        appendCssVar(css, "bubbles-stroke-action", t.accent);
+        appendCssVar(css, "bubbles-stroke-control-inactive", t.strokeSecondary);
+        appendCssVar(css, "bubbles-stroke-neutral-secondary", t.strokeSecondary);
+        appendCssVar(css, "bubbles-stroke-primary-inverse-static", t.buttonText);
+        appendCssVar(css, "bubbles-stroke-reply", t.accent);
+        appendCssVar(css, "bubbles-stroke-reply-outside", t.accent);
+        appendCssVar(css, "sferum-card", t.sferumCard);
+        appendCssVar(css, "states-sferum-card-hover", t.bgHover);
+        appendCssVar(css, "states-sferum-card-pressed", t.bgPressed);
+        appendCssVar(css, "skeleton-cell-static-background", t.bgTertiary);
+        appendCssVar(css, "skeleton-grid-static-background", t.bgTertiary);
+        appendCssVar(css, "skeleton-bubble-primary-static-background", t.bgTertiary);
+        appendCssVar(css, "skeleton-bubble-secondary-static-background", t.bgSecondary);
+        appendCssVar(css, "shadow-elevation-1-primary", t.shadow);
+        appendCssVar(css, "shadow-elevation-1-secondary", t.shadow);
+        appendCssVar(css, "shadow-elevation-2-primary", t.shadow);
+        appendCssVar(css, "shadow-elevation-2-secondary", t.shadow);
+        appendCssVar(css, "shadow-elevation-3-primary", t.shadow);
+        appendCssVar(css, "shadow-elevation-3-secondary", t.shadow);
+        appendCssVar(css, "shadow-elevation-4-primary", t.shadow);
+        appendCssVar(css, "shadow-elevation-4-secondary", t.shadow);
+        appendCssVar(css, "shadow-modal-color", t.shadow);
+        appendCssVar(css, "shadow-tabbar-color", t.shadow);
+        appendCssVar(css, "writebar-divider", t.divider);
+        appendCssVar(css, "writebar-input-stroke", t.strokeTransparent);
+        appendCssVar(css, "writebar-input-text", t.panelText);
+        appendCssVar(css, "etg-max-wallpaper-image", wallpaperImage);
+        appendCssVar(css, "etg-max-wallpaper-gradient", "linear-gradient(135deg," + t.wallpaper + "," + t.wallpaperTo1 + " 55%," + t.wallpaperTo2 + ")");
+        css.append("}");
+        css.append("html,body,#app,.app,[class*=layout],[class*=screen]{background:").append(t.bg)
+                .append("!important;color:").append(t.text).append("!important;}");
+        css.append("aside,.aside,.navigation,.folders,.tabs,.tabbar,.header,.player,.collapsedCall,.settings,.modal,.actionsMenu,.popoverMobileSheet,.dropdown{background:")
+                .append(t.bg).append("!important;color:").append(t.text).append("!important;}");
+        css.append(".layout,.panel,.profileDeleteBanner,.answerList,.buttons,.content,.sticky:before{background:")
+                .append(t.bgSurface).append("!important;color:").append(t.text).append("!important;}");
+        css.append(".search,.input,.fieldPlaceholder,input,textarea,[contenteditable=true]{background:")
+                .append(t.bgTertiary).append("!important;color:").append(t.panelText)
+                .append("!important;caret-color:").append(t.accent).append("!important;border-color:")
+                .append(t.strokeTransparent).append("!important;}");
+        css.append(".field::placeholder,input::placeholder,textarea::placeholder{color:").append(t.hint).append("!important;}");
+        css.append(".button--active,.tab--active,.active-slide,.item--active,.profile--active,.wrapper--selected{color:")
+                .append(t.accent).append("!important;}");
+        css.append("button,.button,[role=button],.actionsMenuItem,.dropdownItem,.country,.item,.cell{color:")
+                .append(t.text).append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
+        css.append(".button:not(.button--active):not(.button--primary),button:not(.button--active):not(.button--primary),[role=button]:not(.button--active):not(.button--primary){background-color:transparent;color:")
+                .append(t.text).append("!important;}");
+        css.append(".button--neutral-primary,.button--secondary,[class*=button--neutral],[class*=button--secondary],.actionsButton,.image.svelte-xkz34c{background:")
+                .append(t.bgTertiary).append("!important;color:").append(t.text).append("!important;}");
+        css.append(".button--primary,[class*=button--primary],.button--active,.button--themed{background:")
+                .append(t.accent).append("!important;color:").append(t.buttonText).append("!important;}");
+        css.append(".cell,.item,.actionsMenuItem,.dropdownItem{background-color:transparent!important;}");
+        css.append(".cell:hover,.item:hover,.actionsMenuItem:not(:disabled):hover,.dropdownItem:hover,.wrapper:hover .cell,.wrapper:focus .cell{background-color:")
+                .append(t.bgHover).append("!important;}");
+        css.append(".cell--selected,.item--active,.profile--active,.wrapper--selected{background:")
+                .append(t.bgSelected).append("!important;}");
+        css.append(".background.svelte-1afbb1c,.layer-base.svelte-1afbb1c,.layer-additional.svelte-1afbb1c,.layer-pattern.svelte-1afbb1c{")
+                .append("background-image:var(--etg-max-wallpaper-image),var(--etg-max-wallpaper-gradient)!important;")
+                .append("background-size:cover,cover!important;background-position:center!important;background-repeat:repeat!important;opacity:1!important;}");
+        css.append(".container.svelte-fxkkld .message{background:").append(t.capsule)
+                .append("!important;color:").append(t.text).append("!important;}");
+        css.append(".widget:not(.widget--plain),[class*=post],[class*=card],[class*=surface],.profileDeleteBanner,.answerList,.panel{background-color:")
+                .append(t.bgCard).append("!important;color:").append(t.text).append("!important;border-color:")
+                .append(t.strokeTransparent).append("!important;}");
+        css.append(".message.svelte-gl41bh{color:").append(t.outText)
+                .append("!important;background:linear-gradient(239deg,").append(t.outBubble1).append(" 0%,")
+                .append(t.outBubble2).append(" 50%,").append(t.outBubble3).append(" 100%)!important;}");
+        css.append(".messageWrapper:not(.messageWrapper--out) .message.svelte-gl41bh{color:").append(t.inText)
+                .append("!important;background:").append(t.inBubble).append("!important;}");
+        css.append(".message.svelte-gl41bh .meta{color:").append(t.outTimeText).append("!important;}");
+        css.append(".messageWrapper:not(.messageWrapper--out) .message.svelte-gl41bh .meta{color:")
+                .append(t.inTimeText).append("!important;}");
+        css.append(".message.svelte-gl41bh a,.message.svelte-gl41bh .link{color:").append(t.outLink).append("!important;}");
+        css.append(".messageWrapper:not(.messageWrapper--out) .message.svelte-gl41bh a,.messageWrapper:not(.messageWrapper--out) .message.svelte-gl41bh .link{color:")
+                .append(t.inLink).append("!important;}");
+        css.append("svg,path{color:inherit;}");
+        return css.toString();
+    }
+
+    private static void appendCssVar(StringBuilder css, String name, String value) {
+        css.append("--").append(name).append(':').append(value).append("!important;");
+    }
+
+    private static String mixCssAlpha(String color, float alpha) {
+        try {
+            if (color != null && color.startsWith("#") && color.length() == 7) {
+                int parsed = Color.parseColor(color);
+                return rgbaColor(parsed, alpha);
+            }
+        } catch (Throwable ignored) {
+        }
+        return color;
     }
 
     private static int resolveThemeColor(String fieldName, int fallback) {
@@ -1925,6 +2264,10 @@ public final class MaxBridge {
         int b = Color.blue(color);
         double luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
         return luminance < 0.5;
+    }
+
+    private static int contrastTextColor(int color) {
+        return isDarkColor(color) ? Color.WHITE : Color.BLACK;
     }
 
     private static int mixColors(int from, int to, float amountTo) {
@@ -2004,17 +2347,35 @@ public final class MaxBridge {
         String bgSecondary;
         String bgTertiary;
         String bgCard;
+        String bgSurface;
+        String bgHover;
+        String bgPressed;
+        String bgSelected;
+        String bgOverlay;
+        String bgOverlayHard;
         String text;
         String textSecondary;
         String textTertiary;
+        String textDisabled;
+        String textInverse;
+        String buttonText;
         String hint;
         String accent;
+        String accentHover;
+        String accentPressed;
+        String accentFade;
         String actionBar;
         String actionTitle;
         String panel;
         String panelText;
         String inBubble;
         String outBubble;
+        String inText;
+        String outText;
+        String inTimeText;
+        String outTimeText;
+        String inLink;
+        String outLink;
         String outBubble1;
         String outBubble2;
         String outBubble3;
@@ -2023,6 +2384,18 @@ public final class MaxBridge {
         String wallpaperTo2;
         String wallpaperTo3;
         String divider;
+        String dividerStrong;
+        String stroke;
+        String strokeSecondary;
+        String strokeTransparent;
+        String positive;
+        String positiveFade;
+        String negative;
+        String negativeFade;
+        String capsule;
+        String counter;
+        String reaction;
+        String sferumCard;
         String shadow;
         String wallpaperImage;
     }
@@ -2118,32 +2491,49 @@ public final class MaxBridge {
             return;
         }
         try {
-            View decor = activity.getWindow().getDecorView();
+            android.view.Window window = activity.getWindow();
+            View decor = window.getDecorView();
             if (decor == null) {
                 return;
             }
-            int flags = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    | View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
             if (!systemBarsHidden || systemBarsDecor != decor) {
                 restoreSystemBars();
+                systemBarsWindow = window;
                 systemBarsDecor = decor;
                 previousSystemUiVisibility = decor.getSystemUiVisibility();
+                if (Build.VERSION.SDK_INT >= 21) {
+                    previousStatusBarColor = window.getStatusBarColor();
+                    previousNavigationBarColor = window.getNavigationBarColor();
+                    previousBarColorsSaved = true;
+                } else {
+                    previousBarColorsSaved = false;
+                }
                 systemBarsHidden = true;
                 decor.setOnSystemUiVisibilityChangeListener(visibility -> {
                     if (systemBarsHidden && systemBarsDecor == decor) {
-                        decor.postDelayed(() -> {
-                            if (systemBarsHidden && systemBarsDecor == decor) {
-                                decor.setSystemUiVisibility(decor.getSystemUiVisibility() | flags);
-                            }
-                        }, 80);
+                        decor.postDelayed(() -> enforceSystemBarsHidden(decor), 40);
+                        decor.postDelayed(() -> enforceSystemBarsHidden(decor), 160);
                     }
                 });
             }
-            decor.setSystemUiVisibility(previousSystemUiVisibility | flags);
+            if (Build.VERSION.SDK_INT >= 21) {
+                window.setStatusBarColor(Color.TRANSPARENT);
+                window.setNavigationBarColor(Color.TRANSPARENT);
+            }
+            enforceSystemBarsHidden(decor);
+            decor.postDelayed(() -> enforceSystemBarsHidden(decor), 40);
+            decor.postDelayed(() -> enforceSystemBarsHidden(decor), 180);
+            decor.postDelayed(() -> enforceSystemBarsHidden(decor), 520);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void enforceSystemBarsHidden(View decor) {
+        try {
+            if (decor != null && systemBarsHidden && systemBarsDecor == decor) {
+                decor.setSystemUiVisibility((decor.getSystemUiVisibility() | IMMERSIVE_SYSTEM_UI_FLAGS)
+                        & ~View.SYSTEM_UI_FLAG_VISIBLE);
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -2155,10 +2545,19 @@ public final class MaxBridge {
                 decor.setOnSystemUiVisibilityChangeListener(null);
                 decor.setSystemUiVisibility(previousSystemUiVisibility);
             }
+            android.view.Window window = systemBarsWindow;
+            if (window != null && previousBarColorsSaved && Build.VERSION.SDK_INT >= 21) {
+                window.setStatusBarColor(previousStatusBarColor);
+                window.setNavigationBarColor(previousNavigationBarColor);
+            }
         } catch (Throwable ignored) {
         } finally {
             systemBarsDecor = null;
+            systemBarsWindow = null;
             previousSystemUiVisibility = 0;
+            previousStatusBarColor = 0;
+            previousNavigationBarColor = 0;
+            previousBarColorsSaved = false;
             systemBarsHidden = false;
         }
     }
