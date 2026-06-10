@@ -42,6 +42,10 @@ public final class MaxBridge {
     private static final String BUTTON_TAG = "etg_max_button";
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
+    private static FrameLayout cachedOverlay;
+    private static WebView cachedWebView;
+    private static Activity cachedOverlayActivity;
+    private static int overlayGuardGeneration;
     private static View activeFilterTabs;
     private static Object activeOriginalDelegate;
     private static Class<?> activeDelegateType;
@@ -69,6 +73,9 @@ public final class MaxBridge {
     private static boolean previousAnimateToHasStories;
     private static float previousProgressToDialogStoriesCell;
     private static float previousProgressToShowStories;
+    private static int previousDialogStoriesCurrentState;
+    private static boolean previousDialogStoriesCollapsed;
+    private static boolean previousDialogStoriesStateCaptured;
     private static boolean previousDialogStoriesAllowGlobalUpdates;
     private static boolean previousDialogStoriesAllowGlobalUpdatesCaptured;
     private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
@@ -1367,18 +1374,30 @@ public final class MaxBridge {
     public static void hide(Object dialogsActivity) {
         Object target = resolveDialogsActivity(dialogsActivity);
         View root = getFragmentView(target);
-        hideOverlay(root);
+        hideOverlay(root, true);
     }
 
     private static void hideOverlay(View root) {
+        hideOverlay(root, false);
+    }
+
+    private static void hideOverlay(View root, boolean destroyReusable) {
         try {
             if (root instanceof ViewGroup) {
                 View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
                 if (overlay != null) {
-                    ((ViewGroup) root).removeView(overlay);
-                    destroyWebViewsLater(root, overlay);
+                    if (destroyReusable) {
+                        ((ViewGroup) root).removeView(overlay);
+                        destroyWebViewsLater(root, overlay);
+                        clearCachedOverlayIfMatches(overlay);
+                    } else {
+                        detachOverlayForReuse(root, overlay);
+                    }
                 }
                 restoreSelectionIfCurrentMax();
+            }
+            if (destroyReusable) {
+                destroyCachedOverlay();
             }
         } finally {
             restoreTelegramChrome();
@@ -1391,8 +1410,7 @@ public final class MaxBridge {
             if (root instanceof ViewGroup) {
                 View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
                 if (overlay != null) {
-                    ((ViewGroup) root).removeView(overlay);
-                    destroyWebViewsLater(root, overlay);
+                    detachOverlayForReuse(root, overlay);
                 }
             }
             activeFilterTabs = null;
@@ -1412,8 +1430,7 @@ public final class MaxBridge {
             if (root instanceof ViewGroup) {
                 View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
                 if (overlay != null) {
-                    ((ViewGroup) root).removeView(overlay);
-                    destroyWebViewsLater(root, overlay);
+                    detachOverlayForReuse(root, overlay);
                 }
             }
             int restoredId = restoreSelectionFieldsOnly();
@@ -1459,6 +1476,99 @@ public final class MaxBridge {
         root.postDelayed(reload[0], 350);
     }
 
+    private static void detachOverlayForReuse(View host, View overlay) {
+        try {
+            overlayGuardGeneration++;
+            if (overlay == null) {
+                return;
+            }
+            if (overlay instanceof FrameLayout) {
+                cacheOverlay((FrameLayout) overlay);
+                pauseOverlayWebView((FrameLayout) overlay);
+                overlay.setVisibility(View.GONE);
+                Object parent = overlay.getParent();
+                if (parent instanceof ViewGroup) {
+                    ((ViewGroup) parent).removeView(overlay);
+                }
+            } else {
+                Object parent = overlay.getParent();
+                if (parent instanceof ViewGroup) {
+                    ((ViewGroup) parent).removeView(overlay);
+                }
+                if (host != null) {
+                    destroyWebViewsLater(host, overlay);
+                } else {
+                    destroyWebViews(overlay);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void cacheOverlay(FrameLayout overlay) {
+        if (overlay == null) {
+            return;
+        }
+        try {
+            if (cachedOverlay != null && cachedOverlay != overlay) {
+                destroyCachedOverlay();
+            }
+            cachedOverlay = overlay;
+            cachedWebView = findWebView(overlay);
+            Context context = overlay.getContext();
+            cachedOverlayActivity = context instanceof Activity ? (Activity) context : null;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void clearCachedOverlayIfMatches(View overlay) {
+        if (overlay == null || overlay != cachedOverlay) {
+            return;
+        }
+        cachedOverlay = null;
+        cachedWebView = null;
+        cachedOverlayActivity = null;
+    }
+
+    private static void destroyCachedOverlay() {
+        overlayGuardGeneration++;
+        FrameLayout overlay = cachedOverlay;
+        cachedOverlay = null;
+        cachedWebView = null;
+        cachedOverlayActivity = null;
+        if (overlay == null) {
+            return;
+        }
+        try {
+            Object parent = overlay.getParent();
+            if (parent instanceof ViewGroup) {
+                ((ViewGroup) parent).removeView(overlay);
+            }
+            destroyWebViews(overlay);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void pauseOverlayWebView(FrameLayout overlay) {
+        try {
+            WebView webView = overlay != null ? findWebView(overlay) : null;
+            if (webView != null) {
+                webView.onPause();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void resumeOverlayWebView(FrameLayout overlay) {
+        try {
+            WebView webView = overlay != null ? findWebView(overlay) : null;
+            if (webView != null) {
+                webView.onResume();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void destroyWebViewsLater(View host, View view) {
         try {
             host.post(() -> destroyWebViews(view));
@@ -1488,6 +1598,81 @@ public final class MaxBridge {
         }
     }
 
+    private static void prepareOverlayForRoot(FrameLayout overlay, View root) {
+        if (overlay == null) {
+            return;
+        }
+        overlay.setTag(OVERLAY_TAG);
+        overlay.setBackgroundColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhite", Color.WHITE));
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+        overlay.setFocusableInTouchMode(true);
+        overlay.setVisibility(View.VISIBLE);
+        overlay.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+                hideOverlay(root);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private static FrameLayout takeReusableOverlay(Activity activity) {
+        try {
+            if (cachedOverlay == null) {
+                return null;
+            }
+            if (cachedOverlayActivity != null && cachedOverlayActivity != activity) {
+                destroyCachedOverlay();
+                return null;
+            }
+            return cachedOverlay;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void installWebViewClient(WebView webView, View root) {
+        if (webView == null) {
+            return;
+        }
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleWebViewNavigation(view, url);
+            }
+
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return request != null && handleWebViewNavigation(view, String.valueOf(request.getUrl()));
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                scheduleTelegramThemeInjection(view, root);
+            }
+        });
+    }
+
+    private static boolean shouldLoadMaxUrl(WebView webView, String loadUrl) {
+        if (webView == null || loadUrl == null) {
+            return false;
+        }
+        try {
+            String current = webView.getUrl();
+            if (current == null || current.length() == 0 || current.startsWith("about:blank")) {
+                return true;
+            }
+            if (URL.equals(loadUrl)) {
+                return false;
+            }
+            String currentMax = normalizeMaxUrl(current);
+            String targetMax = normalizeMaxUrl(loadUrl);
+            return targetMax != null && !targetMax.equals(currentMax);
+        } catch (Throwable ignored) {
+            return !URL.equals(loadUrl);
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private static void showOverlay(Activity activity, View root, View filterTabs, Object dialogsActivity) {
         showOverlay(activity, root, filterTabs, dialogsActivity, URL);
@@ -1506,6 +1691,8 @@ public final class MaxBridge {
         View old = parent.findViewWithTag(OVERLAY_TAG);
         if (old instanceof FrameLayout) {
             FrameLayout existing = (FrameLayout) old;
+            cacheOverlay(existing);
+            prepareOverlayForRoot(existing, root);
             updateOverlayBounds(parent, filterTabs, existing);
             existing.bringToFront();
             if (Build.VERSION.SDK_INT >= 21) {
@@ -1513,12 +1700,16 @@ public final class MaxBridge {
                 existing.setTranslationZ(dp(activity, 256));
             }
             existing.requestFocus();
+            resumeOverlayWebView(existing);
             hideTelegramChrome(activity, parent, existing, dialogsActivity);
             hideSystemBars(activity);
+            scheduleOverlayGuard(activity, parent, filterTabs, existing, dialogsActivity);
+            scheduleTelegramChromeSuppressBurst(activity, parent, existing, dialogsActivity);
             WebView webView = findWebView(existing);
             if (webView != null) {
+                installWebViewClient(webView, root);
                 scheduleTelegramThemeInjection(webView, root);
-                if (!URL.equals(loadUrl)) {
+                if (shouldLoadMaxUrl(webView, loadUrl)) {
                     webView.loadUrl(loadUrl);
                 }
             }
@@ -1526,21 +1717,44 @@ public final class MaxBridge {
         } else if (old != null) {
             parent.removeView(old);
             destroyWebViewsLater(parent, old);
+            clearCachedOverlayIfMatches(old);
         }
 
-        FrameLayout overlay = new FrameLayout(activity);
-        overlay.setTag(OVERLAY_TAG);
-        overlay.setBackgroundColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhite", Color.WHITE));
-        overlay.setClickable(true);
-        overlay.setFocusable(true);
-        overlay.setFocusableInTouchMode(true);
-        overlay.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
-                hideOverlay(root);
-                return true;
+        FrameLayout overlay = takeReusableOverlay(activity);
+        if (overlay != null) {
+            Object overlayParent = overlay.getParent();
+            if (overlayParent instanceof ViewGroup) {
+                ((ViewGroup) overlayParent).removeView(overlay);
             }
-            return false;
-        });
+            prepareOverlayForRoot(overlay, root);
+            WebView reusedWebView = findWebView(overlay);
+            if (reusedWebView != null) {
+                installWebViewClient(reusedWebView, root);
+                int top = estimateTopMargin(parent, filterTabs);
+                parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+                cacheOverlay(overlay);
+                overlay.bringToFront();
+                if (Build.VERSION.SDK_INT >= 21) {
+                    overlay.setElevation(dp(activity, 256));
+                    overlay.setTranslationZ(dp(activity, 256));
+                }
+                overlay.requestFocus();
+                resumeOverlayWebView(overlay);
+                hideTelegramChrome(activity, parent, overlay, dialogsActivity);
+                hideSystemBars(activity);
+                scheduleOverlayGuard(activity, parent, filterTabs, overlay, dialogsActivity);
+                scheduleTelegramChromeSuppressBurst(activity, parent, overlay, dialogsActivity);
+                if (shouldLoadMaxUrl(reusedWebView, loadUrl)) {
+                    reusedWebView.loadUrl(loadUrl);
+                }
+                scheduleTelegramThemeInjection(reusedWebView, root);
+                return;
+            }
+            destroyCachedOverlay();
+        }
+
+        overlay = new FrameLayout(activity);
+        prepareOverlayForRoot(overlay, root);
 
         WebView webView = new WebView(activity);
         configureWebView(webView);
@@ -1586,24 +1800,11 @@ public final class MaxBridge {
                 return true;
             }
         });
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleWebViewNavigation(view, url);
-            }
-
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return request != null && handleWebViewNavigation(view, String.valueOf(request.getUrl()));
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                scheduleTelegramThemeInjection(view, root);
-            }
-        });
+        installWebViewClient(webView, root);
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        cacheOverlay(overlay);
         overlay.bringToFront();
         if (Build.VERSION.SDK_INT >= 21) {
             overlay.setElevation(dp(activity, 256));
@@ -1613,7 +1814,10 @@ public final class MaxBridge {
         hideTelegramChrome(activity, parent, overlay, dialogsActivity);
         hideSystemBars(activity);
         scheduleOverlayGuard(activity, parent, filterTabs, overlay, dialogsActivity);
-        webView.loadUrl(loadUrl);
+        scheduleTelegramChromeSuppressBurst(activity, parent, overlay, dialogsActivity);
+        if (shouldLoadMaxUrl(webView, loadUrl)) {
+            webView.loadUrl(loadUrl);
+        }
         scheduleTelegramThemeInjection(webView, root);
     }
 
@@ -1621,8 +1825,12 @@ public final class MaxBridge {
         final Runnable[] guard = new Runnable[1];
         final int[] invalidFrames = new int[]{0};
         final int[] nonMaxFrames = new int[]{0};
+        final int guardGeneration = ++overlayGuardGeneration;
         guard[0] = () -> {
             try {
+                if (guardGeneration != overlayGuardGeneration) {
+                    return;
+                }
                 if (overlay.getParent() == null) {
                     restoreSelectionIfCurrentMax();
                     restoreTelegramChrome();
@@ -1669,10 +1877,32 @@ public final class MaxBridge {
                 hideSystemBars(activity);
                 overlay.postDelayed(guard[0], 250);
             } catch (Throwable ignored) {
-                hideOverlay(root);
+                if (guardGeneration == overlayGuardGeneration) {
+                    hideOverlay(root);
+                }
             }
         };
         overlay.postDelayed(guard[0], 250);
+    }
+
+    private static void scheduleTelegramChromeSuppressBurst(Activity activity, ViewGroup root, FrameLayout overlay, Object dialogsActivity) {
+        if (overlay == null) {
+            return;
+        }
+        final int generation = overlayGuardGeneration;
+        final int[] delays = new int[]{16, 64, 140, 240};
+        for (int i = 0; i < delays.length; i++) {
+            overlay.postDelayed(() -> {
+                try {
+                    if (generation != overlayGuardGeneration || overlay.getParent() == null) {
+                        return;
+                    }
+                    hideTelegramChrome(activity, root, overlay, dialogsActivity);
+                    hideSystemBars(activity);
+                } catch (Throwable ignored) {
+                }
+            }, delays[i]);
+        }
     }
 
     private static void hideTelegramChrome(Activity activity, ViewGroup root, View overlay, Object dialogsActivity) {
@@ -1693,6 +1923,7 @@ public final class MaxBridge {
                 hideFieldView(dialogsActivity, "writeButton");
                 hideFieldView(dialogsActivity, "storyHint");
                 hideFieldView(dialogsActivity, "storyPremiumHint");
+                hideFieldView(dialogsActivity, "dialogStoriesCell");
                 suppressTelegramStories(dialogsActivity);
                 Object controller = getFieldObject(dialogsActivity, "mainTabsActivityController");
                 if (controller != null) {
@@ -1851,6 +2082,9 @@ public final class MaxBridge {
                 if (stories != null) {
                     previousDialogStoriesAllowGlobalUpdates = getBooleanField(stories, "allowGlobalUpdates", true);
                     previousDialogStoriesAllowGlobalUpdatesCaptured = true;
+                    previousDialogStoriesCurrentState = getIntField(stories, "currentState", 2);
+                    previousDialogStoriesCollapsed = getBooleanField(stories, "collapsed", true);
+                    previousDialogStoriesStateCaptured = true;
                 }
                 storiesStateCaptured = true;
             }
@@ -1874,6 +2108,7 @@ public final class MaxBridge {
                 cancelAnimator(getFieldObject(stories, "storiesAnimatorSet"));
                 setBooleanField(stories, "allowGlobalUpdates", false);
                 setBooleanField(stories, "collapsed", true);
+                setIntField(stories, "currentState", 2);
                 invokeFloatBooleanArgMethod(stories, "setProgressToCollapse", 1f, false);
                 storiesView.setClickable(false);
                 storiesView.setEnabled(false);
@@ -1901,6 +2136,10 @@ public final class MaxBridge {
                 if (stories != null && previousDialogStoriesAllowGlobalUpdatesCaptured) {
                     setBooleanField(stories, "allowGlobalUpdates", previousDialogStoriesAllowGlobalUpdates);
                 }
+                if (stories != null && previousDialogStoriesStateCaptured) {
+                    setIntField(stories, "currentState", previousDialogStoriesCurrentState);
+                    setBooleanField(stories, "collapsed", previousDialogStoriesCollapsed);
+                }
             }
         } catch (Throwable ignored) {
         } finally {
@@ -1912,6 +2151,9 @@ public final class MaxBridge {
             previousAnimateToHasStories = false;
             previousProgressToDialogStoriesCell = 0f;
             previousProgressToShowStories = 0f;
+            previousDialogStoriesCurrentState = 2;
+            previousDialogStoriesCollapsed = true;
+            previousDialogStoriesStateCaptured = false;
             previousDialogStoriesAllowGlobalUpdates = false;
             previousDialogStoriesAllowGlobalUpdatesCaptured = false;
         }
@@ -2216,11 +2458,42 @@ public final class MaxBridge {
     private static Drawable getTelegramWallpaperDrawable(View anchor) {
         try {
             Class<?> theme = Class.forName("org.telegram.ui.ActionBar.Theme");
+            Drawable cached = invokeStaticDrawableNoArg(theme, "getCachedWallpaperNonBlocking");
+            if (isRenderableWallpaperDrawable(cached)) {
+                return cached;
+            }
             Method method = theme.getMethod("getThemedWallpaper", boolean.class, View.class);
             Object value = method.invoke(null, false, anchor);
+            Drawable themed = value instanceof Drawable ? (Drawable) value : null;
+            return isRenderableWallpaperDrawable(themed) ? themed : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Drawable invokeStaticDrawableNoArg(Class<?> cls, String methodName) {
+        if (cls == null) {
+            return null;
+        }
+        try {
+            Method method = cls.getMethod(methodName);
+            method.setAccessible(true);
+            Object value = method.invoke(null);
             return value instanceof Drawable ? (Drawable) value : null;
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    private static boolean isRenderableWallpaperDrawable(Drawable drawable) {
+        if (drawable == null) {
+            return false;
+        }
+        try {
+            String name = drawable.getClass().getName();
+            return name == null || !name.contains("ColorDrawable");
+        } catch (Throwable ignored) {
+            return true;
         }
     }
 
@@ -2239,7 +2512,9 @@ public final class MaxBridge {
     }
 
     private static String buildTelegramThemeCss(TelegramThemeSnapshot t) {
-        String wallpaperImage = t.wallpaperImage != null ? "url(\"" + t.wallpaperImage + "\")" : "none";
+        String wallpaperLayer = t.wallpaperImage != null
+                ? "url(\"" + t.wallpaperImage + "\")"
+                : "none";
         StringBuilder css = new StringBuilder(22000);
         css.append(":root,html[data-etg-max-theme],html[data-etg-max-theme] body,html[data-etg-max-theme] body *{");
         css.append("color-scheme:").append(t.dark ? "dark" : "light").append("!important;");
@@ -2508,7 +2783,7 @@ public final class MaxBridge {
         appendCssVar(css, "writebar-divider", t.divider);
         appendCssVar(css, "writebar-input-stroke", t.strokeTransparent);
         appendCssVar(css, "writebar-input-text", t.panelText);
-        appendCssVar(css, "etg-max-wallpaper-image", wallpaperImage);
+        appendCssVar(css, "etg-max-wallpaper-layer", wallpaperLayer);
         appendCssVar(css, "etg-max-wallpaper-gradient", "linear-gradient(135deg," + t.wallpaper + "," + t.wallpaperTo1 + " 55%," + t.wallpaperTo2 + ")");
         css.append("}");
         css.append("html,body,#app,.app,[class*=layout],[class*=screen]{background:").append(t.bg)
@@ -2538,13 +2813,38 @@ public final class MaxBridge {
         css.append(".cell--selected,.item--active,.profile--active,.wrapper--selected{background:")
                 .append(t.bgSelected).append("!important;}");
         css.append(".background.svelte-1afbb1c,.layer-base.svelte-1afbb1c,.layer-additional.svelte-1afbb1c,.layer-pattern.svelte-1afbb1c{")
-                .append("background-image:var(--etg-max-wallpaper-image),var(--etg-max-wallpaper-gradient)!important;")
-                .append("background-size:cover,cover!important;background-position:center!important;background-repeat:repeat!important;opacity:1!important;}");
+                .append("background-image:var(--etg-max-wallpaper-layer)!important;")
+                .append("background-color:").append(t.bg).append("!important;")
+                .append("background-size:cover!important;background-position:center!important;background-repeat:repeat!important;opacity:1!important;}");
         css.append(".container.svelte-fxkkld .message{background:").append(t.capsule)
                 .append("!important;color:").append(t.text).append("!important;}");
         css.append(".widget:not(.widget--plain),[class*=post],[class*=card],[class*=surface],.profileDeleteBanner,.answerList,.panel{background-color:")
                 .append(t.bgCard).append("!important;color:").append(t.text).append("!important;border-color:")
                 .append(t.strokeTransparent).append("!important;}");
+        if (t.dark) {
+            css.append("html[data-etg-max-theme=dark] main,html[data-etg-max-theme=dark] section,html[data-etg-max-theme=dark] form,")
+                    .append("html[data-etg-max-theme=dark] [class*=auth],html[data-etg-max-theme=dark] [class*=Auth],")
+                    .append("html[data-etg-max-theme=dark] [class*=login],html[data-etg-max-theme=dark] [class*=Login],")
+                    .append("html[data-etg-max-theme=dark] [class*=phone],html[data-etg-max-theme=dark] [class*=Phone],")
+                    .append("html[data-etg-max-theme=dark] [class*=container],html[data-etg-max-theme=dark] [class*=Container]{")
+                    .append("background-color:").append(t.bg).append("!important;color:").append(t.text).append("!important;}");
+            css.append("html[data-etg-max-theme=dark] div[style*='255, 255, 255'],html[data-etg-max-theme=dark] section[style*='255, 255, 255'],")
+                    .append("html[data-etg-max-theme=dark] form[style*='255, 255, 255'],html[data-etg-max-theme=dark] article[style*='255, 255, 255'],")
+                    .append("html[data-etg-max-theme=dark] div[style*='#fff'],html[data-etg-max-theme=dark] section[style*='#fff'],")
+                    .append("html[data-etg-max-theme=dark] form[style*='#fff'],html[data-etg-max-theme=dark] article[style*='#fff'],")
+                    .append("html[data-etg-max-theme=dark] div[style*='white'],html[data-etg-max-theme=dark] section[style*='white'],")
+                    .append("html[data-etg-max-theme=dark] form[style*='white'],html[data-etg-max-theme=dark] article[style*='white']{")
+                    .append("background-color:").append(t.bgCard).append("!important;color:").append(t.text).append("!important;}");
+            css.append("html[data-etg-max-theme=dark] input,html[data-etg-max-theme=dark] textarea,html[data-etg-max-theme=dark] [contenteditable=true],")
+                    .append("html[data-etg-max-theme=dark] [class*=input],html[data-etg-max-theme=dark] [class*=Input],")
+                    .append("html[data-etg-max-theme=dark] [class*=field],html[data-etg-max-theme=dark] [class*=Field]{")
+                    .append("background-color:").append(t.bgTertiary).append("!important;color:").append(t.panelText)
+                    .append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
+            css.append("html[data-etg-max-theme=dark] button:not([class*=primary]):not([class*=Primary]),")
+                    .append("html[data-etg-max-theme=dark] [role=button]:not([class*=primary]):not([class*=Primary]){")
+                    .append("background-color:").append(t.bgTertiary).append("!important;color:").append(t.text)
+                    .append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
+        }
         css.append(".message.svelte-gl41bh{color:").append(t.outText)
                 .append("!important;background:linear-gradient(239deg,").append(t.outBubble1).append(" 0%,")
                 .append(t.outBubble2).append(" 50%,").append(t.outBubble3).append(" 100%)!important;}");
