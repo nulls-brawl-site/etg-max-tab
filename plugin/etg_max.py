@@ -2,53 +2,26 @@ import hashlib
 import os
 import urllib.parse
 import urllib.request
-from typing import Any, List
 
-from android_utils import copy_to_clipboard, run_on_ui_thread
+from android_utils import run_on_ui_thread
 from base_plugin import AppEvent, BasePlugin, MethodHook
 from client_utils import PLUGINS_QUEUE, get_last_fragment, run_on_queue
 from file_utils import ensure_dir_exists, get_plugins_dir
 from java import jclass
 from java.lang import ClassLoader
-from ui.settings import Header, Input, Switch, Text
 
 __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
-__author__ = "@nulls-brawl-site"
-__version__ = "1.6.2"
+__author__ = "@bsod4ik_plugins"
+__version__ = "1.0.0"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.6.2/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "2b12c153b1784519b818b15e6fb075d81f289fb4406007a0e29f535c6ae52cae"
-LEGACY_DEX_SHA256 = (
-    "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
-    "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
-    "ac842961ad48cbf041683719f031cf400b40f2eb34932f59d5c91c62768e26d4",
-    "8c018a8bbeb412ba9db9756d80d36f16dc4ec18e5c136bfbca0f6488c2365273",
-    "12e226b7de8731d2ccc02b174f5134b6821c4c15d47ee2a1fe57f631b763a8cc",
-    "c9176d1006673a32ca914dfd159b2a7a5173afa4b5b809917c2d97dc8a376c0c",
-    "35336b31450793e048c6f131e1d7590cf9c758683cc0d46eb4f237b82bbe442a",
-    "556a11a834faee19709c5aa4f7313d53925c9831baf441bc3dd5d52f00ef3796",
-    "dcd37756a5699c64d294ea91d65da2490c84ec6be0c80ae478216455c7c87fa8",
-    "055bf6272f9d52f3ff86d9fd906566f73ae64047b70d567be603e5d35e7be456",
-    "2e1093e814128343158f38a82d62bcd092e8ab97a7dcfd72024eec9ade9e39b7",
-    "f1cd8e49eae4154a77ae4539d1660d10afb8a016e2cf0ad0a28c5bc062ab51b9",
-    "51530b74756b8b48c6da01621f84533be6b036b8c143906ebb219d3d7df025be",
-    "43d6c79a125783d7a06b6444e90e75a3320bb8dd20060462f919bd76d8cc481d",
-    "d159d459f351f774e971a313dd4b5f8b0f4cb891b4f194ba677da44273b56c97",
-    "6e74b38205c783aabc366a9d274aec2b76694e867cefbd452f2c6c8dc8e1631c",
-    "fd8a333c215365586100433e1162f04120f26cfb4dbe39f75cd112ad0f0e6003",
-    "b45a54a6317708f1781e7a3f5b0976477883516213d48e153c29884f9052c775",
-    "6a89b637e1a33e0b854ef8bfe0c654b0edad9725e74593afa39bff9423fcddd7",
-    "37e041548d6d0e19037bd3546c54b5188f27814f47241f4831befb7ff4c37038",
-    "8b9704a774ecbee5df0d0399652f104fe66e9370e03098f98e1f560d4a3941c6",
-    "00e534f593551a4426c792148643d634eaa23033219202dba24b1500f6c90050",
-    "bdf12cbab30b3dd4bff4ce1bf21a3710934746b17afa914c9d12cc10b93111ba",
-)
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.0.0/etg-max-bridge.dex"
+DEFAULT_DEX_SHA256 = "1402ba3aabb41ff4ed44fcc298790ef43db43f7501a0c611c104dc3246ff3635"
 
 
 class _AfterCreateView(MethodHook):
@@ -101,7 +74,6 @@ class _BeforeUrlSpanClick(MethodHook):
 
 class MaxTabPlugin(BasePlugin):
     def on_plugin_load(self):
-        self._log_lines = []
         self._bridge = None
         self._bridge_install = None
         self._bridge_before_update = None
@@ -110,46 +82,12 @@ class MaxTabPlugin(BasePlugin):
         self._bridge_ready = False
         self._pending_fragments = []
         self._pending_max_links = []
-        self._hooks = []
         run_on_queue(self._load_bridge, PLUGINS_QUEUE)
         self._install_hooks()
 
     def on_plugin_unload(self):
         self._pending_fragments = []
         self._pending_max_links = []
-
-    def create_settings(self) -> List[Any]:
-        return [
-            Header(text="MAX"),
-            Switch(
-                key="auto_download",
-                text="Auto-download dex",
-                default=True,
-                subtext="Loads the native bridge from the configured URL.",
-                icon="msg_plugins",
-            ),
-            Input(
-                key="dex_url",
-                text="Dex URL",
-                default=DEFAULT_DEX_URL,
-                subtext="GitHub release asset URL.",
-                icon="msg_link",
-            ),
-            Input(
-                key="dex_sha256",
-                text="Dex SHA-256",
-                default=DEFAULT_DEX_SHA256,
-                subtext="Leave empty only while testing your own build.",
-                icon="msg_info",
-            ),
-            Text(
-                text="Copy logs",
-                subtext="Copies loader status, dex path, URL, and checksum.",
-                icon="msg_copy",
-                on_click=lambda _view: self.copy_logs(),
-            ),
-            Text(text="Reload plugin after changing URL or checksum.", icon="msg_info"),
-        ]
 
     def _install_hooks(self):
         DialogsActivity = self._class_ref("org.telegram.ui.DialogsActivity")
@@ -265,9 +203,6 @@ class MaxTabPlugin(BasePlugin):
                 self._make_read_only(dex_path)
                 self._log(f"MAX Tab: using cached dex at {dex_path}")
                 return dex_path
-        if not self.get_setting("auto_download", True):
-            self._log(f"MAX Tab: dex missing at {dex_path} and auto-download is off")
-            return None
         tmp_path = dex_path + ".tmp"
         try:
             self._log(f"MAX Tab: downloading dex to {dex_path}")
@@ -458,44 +393,14 @@ class MaxTabPlugin(BasePlugin):
             return False
         return host == "max.ru" or host.endswith(".max.ru")
 
-    def copy_logs(self):
-        dex_path = os.path.join(self._dex_dir(), "etg-max-bridge.dex")
-        lines = [
-            "MAX Tab logs",
-            f"plugin_version={__version__}",
-            f"sdk_version={__sdk_version__}",
-            f"dex_url={self._dex_url()}",
-            f"dex_sha256={self._expected_dex_sha()}",
-            f"dex_path={dex_path}",
-            f"dex_exists={os.path.exists(dex_path)}",
-            f"bridge_ready={self._bridge_ready}",
-            "",
-        ]
-        lines.extend(getattr(self, "_log_lines", []))
-        copy_to_clipboard("\n".join(lines))
-
     def _dex_dir(self):
         return os.path.join(get_plugins_dir(), __id__)
 
     def _expected_dex_sha(self):
-        expected_sha = (self.get_setting("dex_sha256", DEFAULT_DEX_SHA256) or "").strip().lower()
-        if expected_sha in LEGACY_DEX_SHA256:
-            try:
-                self.set_setting("dex_sha256", DEFAULT_DEX_SHA256, False)
-            except Exception:
-                pass
-            return DEFAULT_DEX_SHA256
-        return expected_sha
+        return DEFAULT_DEX_SHA256
 
     def _dex_url(self):
-        url = (self.get_setting("dex_url", DEFAULT_DEX_URL) or "").strip()
-        if not url or "/releases/latest/download/" in url:
-            try:
-                self.set_setting("dex_url", DEFAULT_DEX_URL, False)
-            except Exception:
-                pass
-            return DEFAULT_DEX_URL
-        return url
+        return DEFAULT_DEX_URL
 
     def _class_ref(self, name):
         try:
@@ -532,13 +437,8 @@ class MaxTabPlugin(BasePlugin):
         except Exception as e:
             self._log(f"MAX Tab: failed to make dex read-only: {e}")
 
-    def _log(self, message):
-        try:
-            self._log_lines.append(str(message))
-            self._log_lines = self._log_lines[-120:]
-        except Exception:
-            return
-        self.log(message)
+    def _log(self, _message):
+        return
 
     def _sha256(self, path):
         h = hashlib.sha256()

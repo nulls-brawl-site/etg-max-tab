@@ -92,11 +92,18 @@ public final class MaxBridge {
             }
         }
         String result = openOnDialogsActivity(target, url);
+        final boolean openedNow = result != null && result.startsWith("link: opened");
         View root = getFragmentView(target);
         if (root != null) {
-            root.postDelayed(() -> openOnDialogsActivity(target, url), 120);
-            root.postDelayed(() -> openOnDialogsActivity(target, url), 420);
-            root.postDelayed(() -> openOnDialogsActivity(target, url), 900);
+            root.postDelayed(() -> {
+                if (openedNow) {
+                    refreshOpenOnDialogsActivity(target, url);
+                } else {
+                    openOnDialogsActivity(target, url);
+                }
+            }, 120);
+            root.postDelayed(() -> refreshOpenOnDialogsActivity(target, url), 420);
+            root.postDelayed(() -> refreshOpenOnDialogsActivity(target, url), 900);
         }
         return result;
     }
@@ -264,6 +271,25 @@ public final class MaxBridge {
     }
 
     private static String openOnDialogsActivity(Object dialogsActivity, String url) {
+        return openOnDialogsActivity(dialogsActivity, url, true);
+    }
+
+    private static String refreshOpenOnDialogsActivity(Object dialogsActivity, String url) {
+        View root = getFragmentView(dialogsActivity);
+        View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
+        if (!(root instanceof ViewGroup) || filterTabs == null) {
+            return "link: stale";
+        }
+        if (((ViewGroup) root).findViewWithTag(OVERLAY_TAG) == null) {
+            return "link: stale";
+        }
+        if (getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID) {
+            return "link: stale";
+        }
+        return openOnDialogsActivity(dialogsActivity, url, false);
+    }
+
+    private static String openOnDialogsActivity(Object dialogsActivity, String url, boolean captureRestore) {
         if (dialogsActivity == null) {
             return "link: dialogsActivity=null";
         }
@@ -276,8 +302,12 @@ public final class MaxBridge {
                     + " filterTabsView=" + (filterTabs != null);
         }
         cleanupOldStandaloneButton(root, filterTabs);
+        boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
         installFilterTab(dialogsActivity, activity, root, filterTabs);
-        captureCurrentRestorePoint(filterTabs, dialogsActivity);
+        if (captureRestore || !overlayActive) {
+            captureCurrentRestorePoint(filterTabs, dialogsActivity);
+            normalizeDialogsSelection(dialogsActivity, filterTabs, restoreTabId);
+        }
         int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
         if (maxIndex < 0) {
             return "link: max tab missing";
