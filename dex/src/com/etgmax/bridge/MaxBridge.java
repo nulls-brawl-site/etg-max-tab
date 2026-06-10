@@ -125,6 +125,8 @@ public final class MaxBridge {
             ArrayList<?> tabs = (ArrayList<?>) tabsValue;
             for (Object tab : tabs) {
                 if (getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
+                    setBooleanField(tab, "isLocked", true);
+                    repairMaxSelection(filterTabs, tabs);
                     boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
                     notifyTabsChanged(filterTabs);
                     return "install: tab already present tabs=" + tabs.size()
@@ -145,7 +147,8 @@ public final class MaxBridge {
                     boolean.class,
                     boolean.class
             );
-            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
+            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, true);
+            repairMaxSelection(filterTabs, tabs);
             filterTabs.setTag(TAB_TAG);
             boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
             notifyTabsChanged(filterTabs);
@@ -299,8 +302,30 @@ public final class MaxBridge {
         if (root instanceof ViewGroup) {
             View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
             if (overlay != null) {
+                destroyWebViews(overlay);
                 ((ViewGroup) root).removeView(overlay);
             }
+        }
+    }
+
+    private static void destroyWebViews(View view) {
+        try {
+            if (view instanceof WebView) {
+                WebView webView = (WebView) view;
+                webView.stopLoading();
+                webView.loadUrl("about:blank");
+                webView.clearHistory();
+                webView.removeAllViews();
+                webView.destroy();
+                return;
+            }
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    destroyWebViews(group.getChildAt(i));
+                }
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -366,7 +391,7 @@ public final class MaxBridge {
         ));
 
         TextView close = new TextView(activity);
-        close.setText("×");
+        close.setText("X");
         close.setGravity(Gravity.CENTER);
         close.setTextSize(24);
         close.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -607,6 +632,47 @@ public final class MaxBridge {
             return field.getInt(target);
         } catch (Throwable ignored) {
             return fallback;
+        }
+    }
+
+    private static void setBooleanField(Object target, String name, boolean value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field != null) {
+                field.setAccessible(true);
+                field.setBoolean(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void repairMaxSelection(View filterTabs, ArrayList<?> tabs) {
+        try {
+            Field selectedField = findField(filterTabs.getClass(), "selectedTabId");
+            Field currentField = findField(filterTabs.getClass(), "currentPosition");
+            if (selectedField == null || currentField == null) {
+                return;
+            }
+            selectedField.setAccessible(true);
+            currentField.setAccessible(true);
+            if (selectedField.getInt(filterTabs) != MAX_TAB_ID) {
+                return;
+            }
+            for (int i = 0; i < tabs.size(); i++) {
+                Object tab = tabs.get(i);
+                int id = getIntField(tab, "id", Integer.MIN_VALUE);
+                if (id != MAX_TAB_ID && id != Integer.MIN_VALUE) {
+                    selectedField.setInt(filterTabs, id);
+                    currentField.setInt(filterTabs, i);
+                    return;
+                }
+            }
+            selectedField.setInt(filterTabs, -1);
+            currentField.setInt(filterTabs, 0);
+        } catch (Throwable ignored) {
         }
     }
 
