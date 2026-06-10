@@ -18,5 +18,5 @@ The bridge dex is built from the latest tested MAX Tab v2 source and is loaded b
 The `2.0.0` loader downloads:
 
 ```text
-https://raw.githubusercontent.com/nulls-brawl-site/etg-max-tab/v2.0.0/etgmax_v2/build/etg-max-bridge.dex
+https://raw.githubusercontent.com/nulls-brawl-site/etg-max-tab/ce05dab9ac4f82993da6db929b7410ff4fe25c2d/etgmax_v2/build/etg-max-bridge.dex
 ```
