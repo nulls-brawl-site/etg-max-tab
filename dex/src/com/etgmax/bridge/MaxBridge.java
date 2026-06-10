@@ -139,7 +139,12 @@ public final class MaxBridge {
             boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
-                restoreInternalSelectionToRealTab(filterTabs);
+                int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
+                if (maxIndex >= 0) {
+                    setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
+                    setIntField(filterTabs, "currentPosition", maxIndex);
+                    setIntField(filterTabs, "oldAnimatedTab", maxIndex);
+                }
                 activeFilterTabs = filterTabs;
             }
             notifyTabsChanged(filterTabs);
@@ -279,24 +284,26 @@ public final class MaxBridge {
                 if (isMaxTabView(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
-                    restoreInternalSelectionToRealTab(filterTabs);
                     return true;
                 }
-                sanitizeRegularSelectionAfterMax(filterTabs, args);
+                Boolean switchPage = prepareRegularSelectionAfterMax(dialogsActivity, filterTabs, args);
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
+                forceDialogsSwitch(dialogsActivity, switchPage);
                 return result;
             }
             if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
-                    restoreInternalSelectionToRealTab(filterTabs);
                     return defaultValue(method.getReturnType());
                 }
-                sanitizeRegularSelectionAfterMax(filterTabs, args);
+                Boolean switchPage = "onPageSelected".equals(name)
+                        ? prepareRegularSelectionAfterMax(dialogsActivity, filterTabs, args)
+                        : null;
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
+                forceDialogsSwitch(dialogsActivity, switchPage);
                 return result;
             }
             return method.invoke(original, args);
@@ -318,44 +325,6 @@ public final class MaxBridge {
 
     private static boolean isMaxTab(Object tab) {
         return getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID;
-    }
-
-    private static void restoreInternalSelectionToRealTab(View filterTabs) {
-        try {
-            int id = restoreTabId;
-            int pos = restorePosition;
-            if (id == Integer.MIN_VALUE || id == MAX_TAB_ID || pos < 0) {
-                id = Integer.MIN_VALUE;
-                pos = -1;
-                Field tabsField = findField(filterTabs.getClass(), "tabs");
-                if (tabsField != null) {
-                    tabsField.setAccessible(true);
-                    Object value = tabsField.get(filterTabs);
-                    if (value instanceof ArrayList) {
-                        ArrayList tabs = (ArrayList) value;
-                        for (int i = 0; i < tabs.size(); i++) {
-                            int tabId = getIntField(tabs.get(i), "id", Integer.MIN_VALUE);
-                            if (tabId != Integer.MIN_VALUE && tabId != MAX_TAB_ID) {
-                                id = tabId;
-                                pos = i;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if (id != Integer.MIN_VALUE && id != MAX_TAB_ID && pos >= 0) {
-                setIntField(filterTabs, "selectedTabId", id);
-                setIntField(filterTabs, "currentPosition", pos);
-                setIntField(filterTabs, "oldAnimatedTab", pos);
-                setIntField(filterTabs, "previousId", id);
-                setIntField(filterTabs, "previousPosition", pos);
-                setBooleanField(filterTabs, "animatingIndicator", false);
-                filterTabs.setEnabled(true);
-                notifyTabsChanged(filterTabs);
-            }
-        } catch (Throwable ignored) {
-        }
     }
 
     private static void rememberRestorePoint(View filterTabs, Object originalDelegate, Class<?> delegateType, Object dialogsActivity) {
@@ -459,32 +428,69 @@ public final class MaxBridge {
         }
     }
 
-    private static void sanitizeRegularSelectionAfterMax(View filterTabs, Object[] args) {
+    private static Boolean prepareRegularSelectionAfterMax(Object dialogsActivity, View filterTabs, Object[] args) {
         try {
             Object tab = null;
             if (args != null && args.length > 0) {
                 if (isMaxTabView(args[0])) {
-                    return;
+                    return null;
                 }
                 tab = isMaxTab(args[0]) ? null : args[0];
             }
             int targetId = getIntField(tab, "id", Integer.MIN_VALUE);
             int targetPosition = findTabPositionById(filterTabs, targetId);
             if (targetId == Integer.MIN_VALUE || targetId == MAX_TAB_ID || targetPosition < 0) {
-                return;
+                return null;
             }
             if (getIntField(filterTabs, "previousId", Integer.MIN_VALUE) == MAX_TAB_ID || activeFilterTabs == filterTabs) {
-                setIntField(filterTabs, "previousId", targetId);
-                setIntField(filterTabs, "previousPosition", targetPosition);
-                setIntField(filterTabs, "selectedTabId", targetId);
-                setIntField(filterTabs, "currentPosition", targetPosition);
-                setIntField(filterTabs, "oldAnimatedTab", targetPosition);
-                setBooleanField(filterTabs, "animatingIndicator", false);
-                filterTabs.setEnabled(true);
+                int realPreviousId = restoreTabId;
+                int realPreviousPosition = restorePosition;
+                if (realPreviousId == Integer.MIN_VALUE || realPreviousId == MAX_TAB_ID || realPreviousPosition < 0) {
+                    realPreviousId = targetId;
+                    realPreviousPosition = targetPosition;
+                }
+                setIntField(filterTabs, "previousId", realPreviousId);
+                setIntField(filterTabs, "previousPosition", realPreviousPosition);
                 if (args != null && args.length > 1 && args[1] instanceof Boolean) {
                     args[1] = Boolean.FALSE;
                 }
+                int currentType = getDialogsSelectedType(dialogsActivity, 0);
+                return currentType == targetId ? Boolean.FALSE : Boolean.TRUE;
             }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static int getDialogsSelectedType(Object dialogsActivity, int pageIndex) {
+        try {
+            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
+            if (viewPagesField == null) {
+                return Integer.MIN_VALUE;
+            }
+            viewPagesField.setAccessible(true);
+            Object value = viewPagesField.get(dialogsActivity);
+            if (!(value instanceof Object[])) {
+                return Integer.MIN_VALUE;
+            }
+            Object[] pages = (Object[]) value;
+            if (pageIndex < 0 || pageIndex >= pages.length || pages[pageIndex] == null) {
+                return Integer.MIN_VALUE;
+            }
+            return getIntField(pages[pageIndex], "selectedType", Integer.MIN_VALUE);
+        } catch (Throwable ignored) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    private static void forceDialogsSwitch(Object dialogsActivity, Boolean page) {
+        if (dialogsActivity == null || page == null) {
+            return;
+        }
+        try {
+            Method method = dialogsActivity.getClass().getMethod("switchToCurrentSelectedMode", boolean.class);
+            method.setAccessible(true);
+            method.invoke(dialogsActivity, page.booleanValue());
         } catch (Throwable ignored) {
         }
     }
@@ -636,6 +642,8 @@ public final class MaxBridge {
         FrameLayout overlay = new FrameLayout(activity);
         overlay.setTag(OVERLAY_TAG);
         overlay.setBackgroundColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhite", Color.WHITE));
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
         overlay.setFocusableInTouchMode(true);
         overlay.setOnKeyListener((v, keyCode, event) -> {
             if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
@@ -674,8 +682,8 @@ public final class MaxBridge {
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
         overlay.bringToFront();
         if (Build.VERSION.SDK_INT >= 21) {
-            overlay.setElevation(dp(activity, 64));
-            overlay.setTranslationZ(dp(activity, 64));
+            overlay.setElevation(dp(activity, 256));
+            overlay.setTranslationZ(dp(activity, 256));
         }
         overlay.requestFocus();
         webView.loadUrl(URL);
