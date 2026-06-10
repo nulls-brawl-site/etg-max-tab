@@ -2799,14 +2799,8 @@ public final class MaxBridge {
         css.append(".field::placeholder,input::placeholder,textarea::placeholder{color:").append(t.hint).append("!important;}");
         css.append(".button--active,.tab--active,.active-slide,.item--active,.profile--active,.wrapper--selected{color:")
                 .append(t.accent).append("!important;}");
-        css.append("button,.button,[role=button],.actionsMenuItem,.dropdownItem,.country,.item,.cell{color:")
+        css.append(".actionsMenuItem,.dropdownItem,.country,.item,.cell{color:")
                 .append(t.text).append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
-        css.append(".button:not(.button--active):not(.button--primary),button:not(.button--active):not(.button--primary),[role=button]:not(.button--active):not(.button--primary){background-color:transparent;color:")
-                .append(t.text).append("!important;}");
-        css.append(".button--neutral-primary,.button--secondary,[class*=button--neutral],[class*=button--secondary],.actionsButton,.image.svelte-xkz34c{background:")
-                .append(t.bgTertiary).append("!important;color:").append(t.text).append("!important;}");
-        css.append(".button--primary,[class*=button--primary],.button--active,.button--themed{background:")
-                .append(t.accent).append("!important;color:").append(t.buttonText).append("!important;}");
         css.append(".cell,.item,.actionsMenuItem,.dropdownItem{background-color:transparent!important;}");
         css.append(".cell:hover,.item:hover,.actionsMenuItem:not(:disabled):hover,.dropdownItem:hover,.wrapper:hover .cell,.wrapper:focus .cell{background-color:")
                 .append(t.bgHover).append("!important;}");
@@ -2835,14 +2829,8 @@ public final class MaxBridge {
                     .append("html[data-etg-max-theme=dark] div[style*='white'],html[data-etg-max-theme=dark] section[style*='white'],")
                     .append("html[data-etg-max-theme=dark] form[style*='white'],html[data-etg-max-theme=dark] article[style*='white']{")
                     .append("background-color:").append(t.bgCard).append("!important;color:").append(t.text).append("!important;}");
-            css.append("html[data-etg-max-theme=dark] input,html[data-etg-max-theme=dark] textarea,html[data-etg-max-theme=dark] [contenteditable=true],")
-                    .append("html[data-etg-max-theme=dark] [class*=input],html[data-etg-max-theme=dark] [class*=Input],")
-                    .append("html[data-etg-max-theme=dark] [class*=field],html[data-etg-max-theme=dark] [class*=Field]{")
+            css.append("html[data-etg-max-theme=dark] input,html[data-etg-max-theme=dark] textarea,html[data-etg-max-theme=dark] [contenteditable=true]{")
                     .append("background-color:").append(t.bgTertiary).append("!important;color:").append(t.panelText)
-                    .append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
-            css.append("html[data-etg-max-theme=dark] button:not([class*=primary]):not([class*=Primary]),")
-                    .append("html[data-etg-max-theme=dark] [role=button]:not([class*=primary]):not([class*=Primary]){")
-                    .append("background-color:").append(t.bgTertiary).append("!important;color:").append(t.text)
                     .append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
         }
         css.append(".message.svelte-gl41bh{color:").append(t.outText)
