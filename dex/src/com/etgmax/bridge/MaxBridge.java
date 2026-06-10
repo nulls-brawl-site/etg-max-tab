@@ -312,11 +312,15 @@ public final class MaxBridge {
         if (maxIndex < 0) {
             return "link: max tab missing";
         }
-        setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
-        setIntField(filterTabs, "currentPosition", maxIndex);
-        setIntField(filterTabs, "oldAnimatedTab", maxIndex);
-        setBooleanField(filterTabs, "animatingIndicator", false);
-        notifyTabsChanged(filterTabs);
+        if (!(captureRestore
+                && getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID
+                && selectFilterTab(filterTabs, MAX_TAB_ID))) {
+            setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
+            setIntField(filterTabs, "currentPosition", maxIndex);
+            setIntField(filterTabs, "oldAnimatedTab", maxIndex);
+            setBooleanField(filterTabs, "animatingIndicator", false);
+            notifyTabsChanged(filterTabs);
+        }
         showOverlay(activity, root, filterTabs, dialogsActivity, url);
         return "link: opened " + url;
     }
