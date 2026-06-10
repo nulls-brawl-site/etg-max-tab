@@ -970,7 +970,8 @@ public final class MaxBridge {
             setIntField(filterTabs, "previousId", previousId);
             setIntField(filterTabs, "previousPosition", previousPos);
         }
-        normalizeDialogsSelection(dialogsActivity, filterTabs, previousId);
+        forceDialogsPagesToSelectedType(dialogsActivity, targetId);
+        normalizeDialogsSelection(dialogsActivity, filterTabs, targetId);
     }
 
     private static void restoreSelectionIfCurrentMax() {
@@ -1120,8 +1121,11 @@ public final class MaxBridge {
         }
         Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId);
         try {
+            root.post(repair);
+            root.postDelayed(repair, 40);
             root.postDelayed(repair, 120);
             root.postDelayed(repair, 420);
+            root.postDelayed(repair, 900);
         } catch (Throwable ignored) {
         }
     }
@@ -1139,17 +1143,11 @@ public final class MaxBridge {
             if (getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != targetId) {
                 return;
             }
-            normalizeDialogsSelection(dialogsActivity, filterTabs, targetId);
-            int page0 = getDialogsSelectedType(dialogsActivity, 0);
-            int page1 = getDialogsSelectedType(dialogsActivity, 1);
-            if (page0 == targetId) {
-                forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
-            } else if (page1 == targetId) {
-                forceDialogsSwitchNow(dialogsActivity, Boolean.TRUE);
-            } else {
-                setDialogsSelectedType(dialogsActivity, 0, targetId);
-                forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
-            }
+            setFilterTabsSelectionFields(filterTabs, targetId);
+            forceDialogsPagesToSelectedType(dialogsActivity, targetId);
+            resetDialogsPagesForMainList(dialogsActivity);
+            forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
+            refreshDialogsPageAdapters(dialogsActivity);
         } catch (Throwable ignored) {
         }
     }
@@ -1209,16 +1207,10 @@ public final class MaxBridge {
 
     private static int getDialogsSelectedType(Object dialogsActivity, int pageIndex) {
         try {
-            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
-            if (viewPagesField == null) {
+            Object[] pages = getDialogsViewPages(dialogsActivity);
+            if (pages == null) {
                 return Integer.MIN_VALUE;
             }
-            viewPagesField.setAccessible(true);
-            Object value = viewPagesField.get(dialogsActivity);
-            if (!(value instanceof Object[])) {
-                return Integer.MIN_VALUE;
-            }
-            Object[] pages = (Object[]) value;
             if (pageIndex < 0 || pageIndex >= pages.length || pages[pageIndex] == null) {
                 return Integer.MIN_VALUE;
             }
@@ -1230,20 +1222,107 @@ public final class MaxBridge {
 
     private static void setDialogsSelectedType(Object dialogsActivity, int pageIndex, int selectedType) {
         try {
-            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
-            if (viewPagesField == null) {
+            Object[] pages = getDialogsViewPages(dialogsActivity);
+            if (pages == null) {
                 return;
             }
-            viewPagesField.setAccessible(true);
-            Object value = viewPagesField.get(dialogsActivity);
-            if (!(value instanceof Object[])) {
-                return;
-            }
-            Object[] pages = (Object[]) value;
             if (pageIndex < 0 || pageIndex >= pages.length || pages[pageIndex] == null) {
                 return;
             }
             setIntField(pages[pageIndex], "selectedType", selectedType);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Object[] getDialogsViewPages(Object dialogsActivity) {
+        try {
+            if (dialogsActivity == null) {
+                return null;
+            }
+            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
+            if (viewPagesField == null) {
+                return null;
+            }
+            viewPagesField.setAccessible(true);
+            Object value = viewPagesField.get(dialogsActivity);
+            return value instanceof Object[] ? (Object[]) value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void forceDialogsPagesToSelectedType(Object dialogsActivity, int selectedType) {
+        try {
+            if (selectedType == Integer.MIN_VALUE || selectedType == MAX_TAB_ID) {
+                return;
+            }
+            Object[] pages = getDialogsViewPages(dialogsActivity);
+            if (pages == null) {
+                return;
+            }
+            for (Object page : pages) {
+                if (page != null) {
+                    setIntField(page, "selectedType", selectedType);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void resetDialogsPagesForMainList(Object dialogsActivity) {
+        try {
+            Object[] pages = getDialogsViewPages(dialogsActivity);
+            if (pages == null) {
+                return;
+            }
+            for (int i = 0; i < pages.length; i++) {
+                Object page = pages[i];
+                if (page instanceof View) {
+                    View view = (View) page;
+                    view.setTranslationX(0f);
+                    view.setTranslationY(0f);
+                    view.setAlpha(1f);
+                    view.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+                    view.requestLayout();
+                    view.invalidate();
+                }
+                View listView = getFieldView(page, "listView");
+                if (listView != null) {
+                    listView.setVisibility(View.VISIBLE);
+                    listView.setTranslationX(0f);
+                    listView.setTranslationY(0f);
+                    listView.setAlpha(1f);
+                    listView.requestLayout();
+                    listView.invalidate();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void refreshDialogsPageAdapters(Object dialogsActivity) {
+        try {
+            Object[] pages = getDialogsViewPages(dialogsActivity);
+            if (pages == null) {
+                return;
+            }
+            for (int i = 0; i < pages.length; i++) {
+                Object page = pages[i];
+                if (page == null) {
+                    continue;
+                }
+                Object adapter = getFieldObject(page, "dialogsAdapter");
+                invokeNoArg(adapter, i == 0 ? "resume" : "pause");
+                invokeNoArg(adapter, "notifyDataSetChanged");
+                View listView = getFieldView(page, "listView");
+                if (listView != null) {
+                    invokeNoArg(listView, "stopScroll");
+                    invokeNoArg(listView, "invalidateViews");
+                    listView.requestLayout();
+                    listView.invalidate();
+                }
+            }
+            invokeIntArgMethod(dialogsActivity, "updateVisibleRows", 0);
         } catch (Throwable ignored) {
         }
     }
@@ -3138,6 +3217,21 @@ public final class MaxBridge {
                 method.setAccessible(true);
                 method.invoke(target, first, second);
             }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void invokeIntArgMethod(Object target, String methodName, int value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Method method = findMethod(target.getClass(), methodName, int.class);
+            if (method == null) {
+                method = target.getClass().getMethod(methodName, int.class);
+            }
+            method.setAccessible(true);
+            method.invoke(target, value);
         } catch (Throwable ignored) {
         }
     }
