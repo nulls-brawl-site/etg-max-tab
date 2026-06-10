@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.os.Build;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -225,13 +226,19 @@ public final class MaxBridge {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             String name = method.getName();
-            if ("didSelectTab".equals(name) && args != null && args.length > 0 && isMaxTabView(args[0])) {
-                showOverlay(activity, root, filterTabs);
-                return true;
+            if ("didSelectTab".equals(name) && args != null && args.length > 0) {
+                if (isMaxTabView(args[0])) {
+                    showOverlay(activity, root, filterTabs);
+                    return true;
+                }
+                hideOverlay(root);
             }
-            if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0 && isMaxTab(args[0])) {
-                showOverlay(activity, root, filterTabs);
-                return defaultValue(method.getReturnType());
+            if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0) {
+                if (isMaxTab(args[0])) {
+                    showOverlay(activity, root, filterTabs);
+                    return defaultValue(method.getReturnType());
+                }
+                hideOverlay(root);
             }
             return method.invoke(original, args);
         }
@@ -285,6 +292,10 @@ public final class MaxBridge {
     public static void hide(Object dialogsActivity) {
         Object target = resolveDialogsActivity(dialogsActivity);
         View root = getFragmentView(target);
+        hideOverlay(root);
+    }
+
+    private static void hideOverlay(View root) {
         if (root instanceof ViewGroup) {
             View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
             if (overlay != null) {
@@ -330,6 +341,14 @@ public final class MaxBridge {
         FrameLayout overlay = new FrameLayout(activity);
         overlay.setTag(OVERLAY_TAG);
         overlay.setBackgroundColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhite", Color.WHITE));
+        overlay.setFocusableInTouchMode(true);
+        overlay.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+                hideOverlay(root);
+                return true;
+            }
+            return false;
+        });
 
         WebView webView = new WebView(activity);
         configureWebView(webView);
@@ -345,6 +364,23 @@ public final class MaxBridge {
                 dp(activity, 2),
                 Gravity.TOP
         ));
+
+        TextView close = new TextView(activity);
+        close.setText("×");
+        close.setGravity(Gravity.CENTER);
+        close.setTextSize(24);
+        close.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        close.setTextColor(Color.WHITE);
+        close.setBackgroundColor(0x66000000);
+        close.setOnClickListener(v -> hideOverlay(root));
+        FrameLayout.LayoutParams closeLp = new FrameLayout.LayoutParams(
+                dp(activity, 44),
+                dp(activity, 44),
+                Gravity.TOP | Gravity.RIGHT
+        );
+        closeLp.topMargin = dp(activity, 8);
+        closeLp.rightMargin = dp(activity, 8);
+        overlay.addView(close, closeLp);
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -367,6 +403,7 @@ public final class MaxBridge {
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        overlay.requestFocus();
         webView.loadUrl(URL);
     }
 
