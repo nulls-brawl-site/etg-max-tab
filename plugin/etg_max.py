@@ -15,18 +15,19 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/latest/download/etg-max-bridge.dex"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.3.2/etg-max-bridge.dex"
 DEFAULT_DEX_SHA256 = "12e226b7de8731d2ccc02b174f5134b6821c4c15d47ee2a1fe57f631b763a8cc"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
     "ac842961ad48cbf041683719f031cf400b40f2eb34932f59d5c91c62768e26d4",
+    "8c018a8bbeb412ba9db9756d80d36f16dc4ec18e5c136bfbca0f6488c2365273",
 )
 
 
@@ -158,7 +159,7 @@ class MaxTabPlugin(BasePlugin):
         dex_dir = self._dex_dir()
         ensure_dir_exists(dex_dir)
         dex_path = os.path.join(dex_dir, "etg-max-bridge.dex")
-        url = self.get_setting("dex_url", DEFAULT_DEX_URL)
+        url = self._dex_url()
         expected_sha = self._expected_dex_sha()
         if os.path.exists(dex_path) and os.path.getsize(dex_path) > 1024:
             if not expected_sha or self._sha256(dex_path) == expected_sha:
@@ -245,7 +246,7 @@ class MaxTabPlugin(BasePlugin):
             "MAX Tab logs",
             f"plugin_version={__version__}",
             f"sdk_version={__sdk_version__}",
-            f"dex_url={self.get_setting('dex_url', DEFAULT_DEX_URL)}",
+            f"dex_url={self._dex_url()}",
             f"dex_sha256={self._expected_dex_sha()}",
             f"dex_path={dex_path}",
             f"dex_exists={os.path.exists(dex_path)}",
@@ -267,6 +268,16 @@ class MaxTabPlugin(BasePlugin):
                 pass
             return DEFAULT_DEX_SHA256
         return expected_sha
+
+    def _dex_url(self):
+        url = (self.get_setting("dex_url", DEFAULT_DEX_URL) or "").strip()
+        if not url or "/releases/latest/download/" in url:
+            try:
+                self.set_setting("dex_url", DEFAULT_DEX_URL, False)
+            except Exception:
+                pass
+            return DEFAULT_DEX_URL
+        return url
 
     def _class_ref(self, name):
         try:
