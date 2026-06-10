@@ -558,8 +558,6 @@ public final class MaxBridge {
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         if (isMaxTabInstalledAtEnd(filterTabs) && isWrappedMaxDelegate(filterTabs)) {
             hardenMaxTabVisualState(root, filterTabs, activity);
-            notifyTabsChanged(filterTabs);
-            scheduleTabsRefresh(root, filterTabs, activity);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
@@ -632,7 +630,6 @@ public final class MaxBridge {
             }
             notifyTabsChanged(filterTabs);
             hardenMaxTabVisualState(root, filterTabs, activity);
-            scheduleTabsRefresh(root, filterTabs, activity);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
                     + " tabs=" + tabs.size()
                     + " wrapped=" + wrapped
@@ -712,7 +709,9 @@ public final class MaxBridge {
                 return false;
             }
             InvocationHandler handler = Proxy.getInvocationHandler(current);
-            return handler != null && handler.getClass().getName().indexOf("MaxBridge$MaxTabDelegateHandler") >= 0;
+            return handler != null
+                    && handler.getClass().getName().indexOf("MaxBridge$MaxTabDelegateHandler") >= 0
+                    && handler.getClass().getClassLoader() == MaxBridge.class.getClassLoader();
         } catch (Throwable ignored) {
             return false;
         }
@@ -809,27 +808,6 @@ public final class MaxBridge {
         } catch (Throwable ignored) {
         }
         hardenFilterTabsDrawState(filterTabs, null);
-    }
-
-    private static void scheduleTabsRefresh(View root, View filterTabs, Activity activity) {
-        if (root == null || filterTabs == null) {
-            return;
-        }
-        try {
-            root.post(() -> {
-                hardenFilterTabsDrawState(filterTabs, activity);
-                notifyTabsChanged(filterTabs);
-            });
-            root.postDelayed(() -> {
-                hardenFilterTabsDrawState(filterTabs, activity);
-                notifyTabsChanged(filterTabs);
-            }, 180);
-            root.postDelayed(() -> {
-                hardenFilterTabsDrawState(filterTabs, activity);
-                notifyTabsChanged(filterTabs);
-            }, 650);
-        } catch (Throwable ignored) {
-        }
     }
 
     private static void hardenMaxTabVisualState(View root, View filterTabs, Activity activity) {
