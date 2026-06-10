@@ -1069,8 +1069,6 @@ public final class MaxBridge {
             setIntField(filterTabs, "previousId", previousId);
             setIntField(filterTabs, "previousPosition", previousPos);
         }
-        forceDialogsPagesToSelectedType(dialogsActivity, targetId);
-        normalizeDialogsSelection(dialogsActivity, filterTabs, targetId);
     }
 
     private static void restoreSelectionIfCurrentMax() {
@@ -1232,11 +1230,9 @@ public final class MaxBridge {
         }
         Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId, transitionGeneration);
         try {
-            root.post(repair);
-            root.postDelayed(repair, 40);
-            root.postDelayed(repair, 120);
-            root.postDelayed(repair, 420);
-            root.postDelayed(repair, 900);
+            root.postDelayed(repair, 260);
+            root.postDelayed(repair, 700);
+            root.postDelayed(repair, 1200);
         } catch (Throwable ignored) {
         }
     }
@@ -1251,10 +1247,17 @@ public final class MaxBridge {
             if (root == null || filterTabs == null || !isRegularTabId(filterTabs, targetId)) {
                 return;
             }
+            if (getBooleanField(filterTabs, "animatingIndicator", false) || !filterTabs.isEnabled()) {
+                return;
+            }
             if (root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null) {
                 return;
             }
             if (getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != targetId) {
+                return;
+            }
+            if (getDialogsSelectedType(dialogsActivity, 0) == targetId) {
+                refreshDialogsPageAdapters(dialogsActivity);
                 return;
             }
             setFilterTabsSelectionFields(filterTabs, targetId);
@@ -2048,13 +2051,10 @@ public final class MaxBridge {
                 int selectedId = getIntField(currentFilterTabs, "selectedTabId", Integer.MIN_VALUE);
                 if (selectedId != MAX_TAB_ID) {
                     if (selectedId != Integer.MIN_VALUE && findTabPositionById(currentFilterTabs, selectedId) >= 0) {
-                        nonMaxFrames[0]++;
-                        if (nonMaxFrames[0] >= 2) {
-                            int transitionGeneration = beginTabTransition();
-                            closeOverlayAfterRegularSelection(root);
-                            scheduleRegularSelectionRepair(dialogsActivity, root, selectedId, transitionGeneration);
-                            return;
-                        }
+                        int transitionGeneration = beginTabTransition();
+                        closeOverlayAfterRegularSelection(root);
+                        scheduleRegularSelectionRepair(dialogsActivity, root, selectedId, transitionGeneration);
+                        return;
                     } else {
                         nonMaxFrames[0] = 0;
                     }
