@@ -139,13 +139,8 @@ public final class MaxBridge {
             boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
-                int maxIndex = findMaxTabIndex(tabs);
-                if (maxIndex >= 0) {
-                    setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
-                    setIntField(filterTabs, "currentPosition", maxIndex);
-                    setIntField(filterTabs, "oldAnimatedTab", maxIndex);
-                    activeFilterTabs = filterTabs;
-                }
+                restoreInternalSelectionToRealTab(filterTabs);
+                activeFilterTabs = filterTabs;
             }
             notifyTabsChanged(filterTabs);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
@@ -284,6 +279,7 @@ public final class MaxBridge {
                 if (isMaxTabView(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
+                    restoreInternalSelectionToRealTab(filterTabs);
                     return true;
                 }
                 sanitizeRegularSelectionAfterMax(filterTabs, args);
@@ -295,6 +291,7 @@ public final class MaxBridge {
                 if (isMaxTab(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
+                    restoreInternalSelectionToRealTab(filterTabs);
                     return defaultValue(method.getReturnType());
                 }
                 sanitizeRegularSelectionAfterMax(filterTabs, args);
@@ -323,16 +320,42 @@ public final class MaxBridge {
         return getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID;
     }
 
-    private static int findMaxTabIndex(ArrayList<?> tabs) {
+    private static void restoreInternalSelectionToRealTab(View filterTabs) {
         try {
-            for (int i = 0; i < tabs.size(); i++) {
-                if (getIntField(tabs.get(i), "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
-                    return i;
+            int id = restoreTabId;
+            int pos = restorePosition;
+            if (id == Integer.MIN_VALUE || id == MAX_TAB_ID || pos < 0) {
+                id = Integer.MIN_VALUE;
+                pos = -1;
+                Field tabsField = findField(filterTabs.getClass(), "tabs");
+                if (tabsField != null) {
+                    tabsField.setAccessible(true);
+                    Object value = tabsField.get(filterTabs);
+                    if (value instanceof ArrayList) {
+                        ArrayList tabs = (ArrayList) value;
+                        for (int i = 0; i < tabs.size(); i++) {
+                            int tabId = getIntField(tabs.get(i), "id", Integer.MIN_VALUE);
+                            if (tabId != Integer.MIN_VALUE && tabId != MAX_TAB_ID) {
+                                id = tabId;
+                                pos = i;
+                                break;
+                            }
+                        }
+                    }
                 }
+            }
+            if (id != Integer.MIN_VALUE && id != MAX_TAB_ID && pos >= 0) {
+                setIntField(filterTabs, "selectedTabId", id);
+                setIntField(filterTabs, "currentPosition", pos);
+                setIntField(filterTabs, "oldAnimatedTab", pos);
+                setIntField(filterTabs, "previousId", id);
+                setIntField(filterTabs, "previousPosition", pos);
+                setBooleanField(filterTabs, "animatingIndicator", false);
+                filterTabs.setEnabled(true);
+                notifyTabsChanged(filterTabs);
             }
         } catch (Throwable ignored) {
         }
-        return -1;
     }
 
     private static void rememberRestorePoint(View filterTabs, Object originalDelegate, Class<?> delegateType, Object dialogsActivity) {
@@ -649,6 +672,11 @@ public final class MaxBridge {
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        overlay.bringToFront();
+        if (Build.VERSION.SDK_INT >= 21) {
+            overlay.setElevation(dp(activity, 64));
+            overlay.setTranslationZ(dp(activity, 64));
+        }
         overlay.requestFocus();
         webView.loadUrl(URL);
     }
