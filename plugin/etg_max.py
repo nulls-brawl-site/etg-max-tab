@@ -3,9 +3,9 @@ import os
 import urllib.request
 from typing import Any, List
 
-from android_utils import copy_to_clipboard
-from base_plugin import BasePlugin, MethodHook
-from client_utils import PLUGINS_QUEUE, run_on_queue
+from android_utils import copy_to_clipboard, run_on_ui_thread
+from base_plugin import AppEvent, BasePlugin, MethodHook
+from client_utils import PLUGINS_QUEUE, get_last_fragment, run_on_queue
 from file_utils import ensure_dir_exists, get_plugins_dir
 from java import jclass
 from java.lang import ClassLoader
@@ -15,14 +15,19 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.2.2"
+__version__ = "1.3.0"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
 DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/latest/download/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "ac842961ad48cbf041683719f031cf400b40f2eb34932f59d5c91c62768e26d4"
+DEFAULT_DEX_SHA256 = "8c018a8bbeb412ba9db9756d80d36f16dc4ec18e5c136bfbca0f6488c2365273"
+LEGACY_DEX_SHA256 = (
+    "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
+    "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
+    "ac842961ad48cbf041683719f031cf400b40f2eb34932f59d5c91c62768e26d4",
+)
 
 
 class _AfterCreateView(MethodHook):
@@ -134,15 +139,20 @@ class MaxTabPlugin(BasePlugin):
             for fragment in list(self._pending_fragments):
                 self.install_tab(fragment)
             self._pending_fragments = []
+            self._schedule_current_fragment_install()
         except Exception as e:
             self._log(f"MAX Tab: dex load failed: {e}")
+
+    def on_app_event(self, event_type: AppEvent):
+        if event_type == AppEvent.RESUME:
+            self._schedule_current_fragment_install()
 
     def _ensure_dex(self):
         dex_dir = self._dex_dir()
         ensure_dir_exists(dex_dir)
         dex_path = os.path.join(dex_dir, "etg-max-bridge.dex")
         url = self.get_setting("dex_url", DEFAULT_DEX_URL)
-        expected_sha = (self.get_setting("dex_sha256", DEFAULT_DEX_SHA256) or "").strip().lower()
+        expected_sha = self._expected_dex_sha()
         if os.path.exists(dex_path) and os.path.getsize(dex_path) > 1024:
             if not expected_sha or self._sha256(dex_path) == expected_sha:
                 self._make_read_only(dex_path)
@@ -193,9 +203,30 @@ class MaxTabPlugin(BasePlugin):
                 self._pending_fragments.append(fragment)
             return
         try:
-            self._bridge.install(fragment)
+            try:
+                result = self._bridge.installWithStatus(fragment)
+            except Exception:
+                result = self._bridge.install(fragment)
+            self._log(f"MAX Tab: {result}")
         except Exception as e:
             self._log(f"MAX Tab: install failed: {e}")
+
+    def _schedule_current_fragment_install(self):
+        if not self._bridge_ready:
+            return
+        for delay in (0, 250, 1000, 2500):
+            run_on_ui_thread(lambda: self._install_current_fragment(), delay)
+
+    def _install_current_fragment(self):
+        try:
+            fragment = get_last_fragment()
+            if fragment is None:
+                self._log("MAX Tab: current fragment is null")
+                return
+            self._log(f"MAX Tab: current fragment={fragment.getClass().getName()}")
+            self.install_tab(fragment)
+        except Exception as e:
+            self._log(f"MAX Tab: current fragment install failed: {e}")
 
     def hide_tab(self, fragment):
         if self._bridge_ready and fragment is not None:
@@ -211,7 +242,7 @@ class MaxTabPlugin(BasePlugin):
             f"plugin_version={__version__}",
             f"sdk_version={__sdk_version__}",
             f"dex_url={self.get_setting('dex_url', DEFAULT_DEX_URL)}",
-            f"dex_sha256={self.get_setting('dex_sha256', DEFAULT_DEX_SHA256)}",
+            f"dex_sha256={self._expected_dex_sha()}",
             f"dex_path={dex_path}",
             f"dex_exists={os.path.exists(dex_path)}",
             f"bridge_ready={self._bridge_ready}",
@@ -222,6 +253,16 @@ class MaxTabPlugin(BasePlugin):
 
     def _dex_dir(self):
         return os.path.join(get_plugins_dir(), __id__)
+
+    def _expected_dex_sha(self):
+        expected_sha = (self.get_setting("dex_sha256", DEFAULT_DEX_SHA256) or "").strip().lower()
+        if expected_sha in LEGACY_DEX_SHA256:
+            try:
+                self.set_setting("dex_sha256", DEFAULT_DEX_SHA256, False)
+            except Exception:
+                pass
+            return DEFAULT_DEX_SHA256
+        return expected_sha
 
     def _class_ref(self, name):
         try:

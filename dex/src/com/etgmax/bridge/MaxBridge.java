@@ -36,21 +36,29 @@ public final class MaxBridge {
     }
 
     public static void install(Object dialogsActivity) {
+        installWithStatus(dialogsActivity);
+    }
+
+    public static String installWithStatus(Object dialogsActivity) {
         if (dialogsActivity == null) {
-            return;
+            return "install: fragment=null";
         }
         Activity activity = getActivity(dialogsActivity);
         View root = getFragmentView(dialogsActivity);
         View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
         if (activity == null || root == null || filterTabs == null) {
-            return;
+            return "install: missing activity=" + (activity != null)
+                    + " root=" + (root != null)
+                    + " filterTabsView=" + (filterTabs != null);
         }
-        if (installFilterTabsView(dialogsActivity, activity, root, filterTabs)) {
-            return;
+        String filterStatus = installFilterTabsView(activity, root, filterTabs);
+        if (filterStatus != null) {
+            return filterStatus;
         }
         ViewGroup tabsContainer = findTabsContainer(filterTabs);
         if (tabsContainer == null || tabsContainer.findViewWithTag(TAB_TAG) != null) {
-            return;
+            return "install: fallback tabsContainer=" + (tabsContainer != null)
+                    + " existing=" + (tabsContainer != null && tabsContainer.findViewWithTag(TAB_TAG) != null);
         }
         TextView tab = createTab(activity);
         tab.setTag(TAB_TAG);
@@ -65,30 +73,33 @@ public final class MaxBridge {
             } catch (Throwable ignored) {
             }
         });
+        return "install: fallback text tab added children=" + tabsContainer.getChildCount();
     }
 
-    private static boolean installFilterTabsView(Object dialogsActivity, Activity activity, View root, View filterTabs) {
+    private static String installFilterTabsView(Activity activity, View root, View filterTabs) {
         if (!filterTabs.getClass().getName().equals("org.telegram.ui.Components.FilterTabsView")) {
-            return false;
+            return null;
         }
         try {
             Field tabsField = findField(filterTabs.getClass(), "tabs");
             if (tabsField == null) {
-                return false;
+                return "install: FilterTabsView tabs field=null";
             }
             tabsField.setAccessible(true);
             Object tabsValue = tabsField.get(filterTabs);
             if (!(tabsValue instanceof ArrayList)) {
-                return false;
+                return "install: FilterTabsView tabs not ArrayList";
             }
             ArrayList<?> tabs = (ArrayList<?>) tabsValue;
             for (Object tab : tabs) {
                 if (getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
-                    wrapFilterTabsDelegate(activity, root, filterTabs);
-                    return true;
+                    boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
+                    notifyTabsChanged(filterTabs);
+                    return "install: FilterTabsView already present tabs=" + tabs.size() + " delegateWrapped=" + wrapped;
                 }
             }
 
+            int before = tabs.size();
             Method addTab = filterTabs.getClass().getMethod(
                     "addTab",
                     int.class,
@@ -102,30 +113,32 @@ public final class MaxBridge {
             );
             addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
             filterTabs.setTag(TAB_TAG);
-            wrapFilterTabsDelegate(activity, root, filterTabs);
+            boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
             notifyTabsChanged(filterTabs);
-            return true;
-        } catch (Throwable ignored) {
-            return false;
+            return "install: FilterTabsView added before=" + before + " after=" + tabs.size() + " delegateWrapped=" + wrapped;
+        } catch (Throwable e) {
+            return "install: FilterTabsView error=" + e.getClass().getSimpleName() + ":" + e.getMessage();
         }
     }
 
-    private static void wrapFilterTabsDelegate(Activity activity, View root, View filterTabs) {
+    private static boolean wrapFilterTabsDelegate(Activity activity, View root, View filterTabs) {
         try {
             Field delegateField = findField(filterTabs.getClass(), "delegate");
             if (delegateField == null) {
-                return;
+                return false;
             }
             delegateField.setAccessible(true);
             Object original = delegateField.get(filterTabs);
             if (original == null || isOurProxy(original)) {
-                return;
+                return original != null;
             }
             Class<?> delegateInterface = Class.forName("org.telegram.ui.Components.FilterTabsView$FilterTabsViewDelegate");
             InvocationHandler handler = new MaxTabDelegateHandler(original, activity, root, filterTabs);
             Object proxy = Proxy.newProxyInstance(delegateInterface.getClassLoader(), new Class[]{delegateInterface}, handler);
             delegateField.set(filterTabs, proxy);
+            return true;
         } catch (Throwable ignored) {
+            return false;
         }
     }
 
