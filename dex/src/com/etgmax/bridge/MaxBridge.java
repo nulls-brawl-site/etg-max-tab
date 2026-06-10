@@ -6,6 +6,7 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
+import android.util.SparseIntArray;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -56,30 +57,9 @@ public final class MaxBridge {
                     + " root=" + (root != null)
                     + " filterTabsView=" + (filterTabs != null);
         }
-        String filterStatus = installFilterTabsView(activity, root, filterTabs);
-        if (filterStatus != null) {
-            return filterStatus;
-        }
-        ViewGroup tabsContainer = findTabsContainer(filterTabs);
-        if (tabsContainer == null || tabsContainer.findViewWithTag(TAB_TAG) != null) {
-            return "install: fallback tabsContainer=" + (tabsContainer != null)
-                    + " existing=" + (tabsContainer != null && tabsContainer.findViewWithTag(TAB_TAG) != null)
-                    + " filterTabsClass=" + filterTabs.getClass().getName();
-        }
-        TextView tab = createTab(activity);
-        tab.setTag(TAB_TAG);
-        tab.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
-        tabsContainer.addView(tab, new LinearLayout.LayoutParams(dp(activity, 64), ViewGroup.LayoutParams.MATCH_PARENT));
-        tabsContainer.post(() -> {
-            try {
-                tabsContainer.requestLayout();
-                if (tabsContainer.getParent() instanceof View) {
-                    ((View) tabsContainer.getParent()).requestLayout();
-                }
-            } catch (Throwable ignored) {
-            }
-        });
-        return "install: fallback text tab added children=" + tabsContainer.getChildCount();
+        String cleanupStatus = cleanupFilterTabsView(filterTabs);
+        String buttonStatus = installStandaloneButton(activity, root, filterTabs);
+        return cleanupStatus + " ; " + buttonStatus;
     }
 
     private static Object resolveDialogsActivity(Object fragment) {
@@ -111,85 +91,117 @@ public final class MaxBridge {
         return null;
     }
 
-    private static String installFilterTabsView(Activity activity, View root, View filterTabs) {
+    private static String cleanupFilterTabsView(View filterTabs) {
+        boolean unwrapped = unwrapFilterTabsDelegate(filterTabs);
+        if (TAB_TAG.equals(filterTabs.getTag())) {
+            filterTabs.setTag(null);
+        }
         try {
             Field tabsField = findField(filterTabs.getClass(), "tabs");
             if (tabsField == null) {
-                return null;
+                return "cleanup: no tabs field class=" + filterTabs.getClass().getName() + " unwrapped=" + unwrapped;
             }
             tabsField.setAccessible(true);
             Object tabsValue = tabsField.get(filterTabs);
             if (!(tabsValue instanceof ArrayList)) {
-                return "install: tabs field not ArrayList class=" + filterTabs.getClass().getName();
+                return "cleanup: tabs not ArrayList class=" + filterTabs.getClass().getName() + " unwrapped=" + unwrapped;
             }
-            ArrayList<?> tabs = (ArrayList<?>) tabsValue;
-            for (Object tab : tabs) {
+            ArrayList tabs = (ArrayList) tabsValue;
+            int removedIndex = -1;
+            for (int i = tabs.size() - 1; i >= 0; i--) {
+                Object tab = tabs.get(i);
                 if (getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
-                    setBooleanField(tab, "isLocked", true);
-                    repairMaxSelection(filterTabs, tabs);
-                    boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
-                    notifyTabsChanged(filterTabs);
-                    return "install: tab already present tabs=" + tabs.size()
-                            + " delegateWrapped=" + wrapped
-                            + " class=" + filterTabs.getClass().getName();
+                    tabs.remove(i);
+                    removedIndex = i;
                 }
             }
-
-            int before = tabs.size();
-            Method addTab = filterTabs.getClass().getMethod(
-                    "addTab",
-                    int.class,
-                    int.class,
-                    String.class,
-                    String.class,
-                    ArrayList.class,
-                    boolean.class,
-                    boolean.class,
-                    boolean.class
-            );
-            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, true);
             repairMaxSelection(filterTabs, tabs);
-            filterTabs.setTag(TAB_TAG);
-            boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
+            if (removedIndex >= 0) {
+                repairMappingsAfterMaxRemoval(filterTabs, tabs, removedIndex);
+            }
             notifyTabsChanged(filterTabs);
-            return "install: tab added before=" + before
-                    + " after=" + tabs.size()
-                    + " delegateWrapped=" + wrapped
+            return "cleanup: removedFakeTab=" + (removedIndex >= 0)
+                    + " tabs=" + tabs.size()
+                    + " unwrapped=" + unwrapped
                     + " class=" + filterTabs.getClass().getName();
         } catch (Throwable e) {
-            return "install: tab add error=" + e.getClass().getSimpleName()
+            return "cleanup: error=" + e.getClass().getSimpleName()
                     + ":" + e.getMessage()
-                    + " class=" + filterTabs.getClass().getName();
+                    + " class=" + filterTabs.getClass().getName()
+                    + " unwrapped=" + unwrapped;
         }
     }
 
-    private static boolean wrapFilterTabsDelegate(Activity activity, View root, View filterTabs) {
+    private static String installStandaloneButton(Activity activity, View root, View filterTabs) {
+        if (!(root instanceof ViewGroup)) {
+            return "button: root not ViewGroup";
+        }
+        ViewGroup parent = (ViewGroup) root;
+        View existing = parent.findViewWithTag(TAB_TAG);
+        if (existing != null && existing != filterTabs) {
+            if (existing.getParent() == parent) {
+                existing.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
+                existing.bringToFront();
+                return "button: existing standalone";
+            }
+            if (existing.getParent() instanceof ViewGroup) {
+                ((ViewGroup) existing.getParent()).removeView(existing);
+            }
+        }
+
+        TextView button = createTab(activity);
+        button.setTag(TAB_TAG);
+        button.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
+        parent.addView(button, makeButtonLayoutParams(parent, filterTabs));
+        button.bringToFront();
+        updateStandaloneButtonState(root, parent.findViewWithTag(OVERLAY_TAG) != null);
+        return "button: added standalone";
+    }
+
+    private static ViewGroup.LayoutParams makeButtonLayoutParams(ViewGroup parent, View filterTabs) {
+        int height = Math.max(filterTabs.getHeight(), dp(parent.getContext(), 44));
+        int width = dp(parent.getContext(), 64);
+        int top = estimateViewTop(parent, filterTabs);
+        if (parent instanceof FrameLayout) {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.RIGHT);
+            lp.topMargin = top;
+            lp.rightMargin = dp(parent.getContext(), 4);
+            return lp;
+        }
+        ViewGroup.MarginLayoutParams lp = new ViewGroup.MarginLayoutParams(width, height);
+        lp.topMargin = top;
+        lp.rightMargin = dp(parent.getContext(), 4);
+        return lp;
+    }
+
+    private static boolean unwrapFilterTabsDelegate(View filterTabs) {
         try {
             Field delegateField = findField(filterTabs.getClass(), "delegate");
             if (delegateField == null) {
                 return false;
             }
             delegateField.setAccessible(true);
-            Object original = delegateField.get(filterTabs);
-            if (original == null || isOurProxy(original)) {
-                return original != null;
+            Object current = delegateField.get(filterTabs);
+            if (current == null || !Proxy.isProxyClass(current.getClass())) {
+                return false;
             }
-            Class<?> delegateInterface = Class.forName("org.telegram.ui.Components.FilterTabsView$FilterTabsViewDelegate");
-            InvocationHandler handler = new MaxTabDelegateHandler(original, activity, root, filterTabs);
-            Object proxy = Proxy.newProxyInstance(delegateInterface.getClassLoader(), new Class[]{delegateInterface}, handler);
-            delegateField.set(filterTabs, proxy);
-            return true;
+            InvocationHandler handler = Proxy.getInvocationHandler(current);
+            if (handler == null || handler.getClass().getName().indexOf("MaxBridge$MaxTabDelegateHandler") < 0) {
+                return false;
+            }
+            Field originalField = findField(handler.getClass(), "original");
+            if (originalField == null) {
+                return false;
+            }
+            originalField.setAccessible(true);
+            Object original = originalField.get(handler);
+            if (original != null) {
+                delegateField.set(filterTabs, original);
+                return true;
+            }
         } catch (Throwable ignored) {
-            return false;
         }
-    }
-
-    private static boolean isOurProxy(Object value) {
-        try {
-            return Proxy.isProxyClass(value.getClass()) && Proxy.getInvocationHandler(value) instanceof MaxTabDelegateHandler;
-        } catch (Throwable ignored) {
-            return false;
-        }
+        return false;
     }
 
     private static void notifyTabsChanged(View filterTabs) {
@@ -305,6 +317,29 @@ public final class MaxBridge {
                 destroyWebViews(overlay);
                 ((ViewGroup) root).removeView(overlay);
             }
+            updateStandaloneButtonState(root, false);
+        }
+    }
+
+    private static void updateStandaloneButtonState(View root, boolean active) {
+        try {
+            if (!(root instanceof ViewGroup)) {
+                return;
+            }
+            View button = ((ViewGroup) root).findViewWithTag(TAB_TAG);
+            if (!(button instanceof TextView)) {
+                return;
+            }
+            TextView text = (TextView) button;
+            text.setSelected(active);
+            if (active) {
+                text.setTextColor(0xff3390ec);
+                text.setBackgroundColor(0x1a3390ec);
+            } else {
+                text.setTextColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhiteBlackText", 0xff222222));
+                text.setBackgroundColor(Color.TRANSPARENT);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -428,6 +463,7 @@ public final class MaxBridge {
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        updateStandaloneButtonState(root, true);
         overlay.requestFocus();
         webView.loadUrl(URL);
     }
@@ -673,6 +709,87 @@ public final class MaxBridge {
             selectedField.setInt(filterTabs, -1);
             currentField.setInt(filterTabs, 0);
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static void repairMappingsAfterMaxRemoval(View filterTabs, ArrayList<?> tabs, int removedIndex) {
+        try {
+            setIntField(filterTabs, "allTabsWidth", 0);
+            clearSparseField(filterTabs, "positionToWidth");
+            clearSparseField(filterTabs, "prevPositionToWidth");
+
+            SparseIntArray positionToId = getSparseField(filterTabs, "positionToId");
+            SparseIntArray positionToStableId = getSparseField(filterTabs, "positionToStableId");
+            SparseIntArray idToPosition = getSparseField(filterTabs, "idToPosition");
+            if (positionToId == null || idToPosition == null) {
+                return;
+            }
+            positionToId.clear();
+            if (positionToStableId != null) {
+                positionToStableId.clear();
+            }
+            idToPosition.clear();
+            for (int i = 0; i < tabs.size(); i++) {
+                Object tab = tabs.get(i);
+                int id = getIntField(tab, "id", Integer.MIN_VALUE);
+                if (id == Integer.MIN_VALUE || id == MAX_TAB_ID) {
+                    continue;
+                }
+                positionToId.put(i, id);
+                if (positionToStableId != null) {
+                    positionToStableId.put(i, id);
+                }
+                idToPosition.put(id, i);
+            }
+            int current = getIntField(filterTabs, "currentPosition", 0);
+            if (current >= removedIndex && current > 0) {
+                setIntField(filterTabs, "currentPosition", Math.min(current - 1, Math.max(tabs.size() - 1, 0)));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static SparseIntArray getSparseField(Object target, String name) {
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            Object value = field.get(target);
+            return value instanceof SparseIntArray ? (SparseIntArray) value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void clearSparseField(Object target, String name) {
+        SparseIntArray value = getSparseField(target, name);
+        if (value != null) {
+            value.clear();
+        }
+    }
+
+    private static void setIntField(Object target, String name, int value) {
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field != null) {
+                field.setAccessible(true);
+                field.setInt(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static int estimateViewTop(ViewGroup root, View child) {
+        try {
+            int[] rootPos = new int[2];
+            int[] childPos = new int[2];
+            root.getLocationOnScreen(rootPos);
+            child.getLocationOnScreen(childPos);
+            return Math.max(childPos[1] - rootPos[1], 0);
+        } catch (Throwable ignored) {
+            return dp(root.getContext(), 48);
         }
     }
 
