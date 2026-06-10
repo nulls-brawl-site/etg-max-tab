@@ -20,7 +20,7 @@ __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-max-tab/ce05dab9ac4f82993da6db929b7410ff4fe25c2d/etgmax_v2/build/etg-max-bridge.dex"
+DEFAULT_DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-max-tab/4a3f76a6c9786b055f1eee2b3c716be797a541c8/etgmax_v2/build/etg-max-bridge.dex"
 DEFAULT_DEX_SHA256 = "0237cc206a2eaeefd024974d05e466e05f7f06d3759fba396e07d2dcb2e144da"
 
 
