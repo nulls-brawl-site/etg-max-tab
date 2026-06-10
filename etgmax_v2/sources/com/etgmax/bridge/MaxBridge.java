@@ -43,6 +43,7 @@ public final class MaxBridge {
     private static final String BUTTON_TAG = "etg_max_button";
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
+    private static final String MAX_TAB_EMOTICON = "\uD83D\uDCAC";
     private static FrameLayout cachedOverlay;
     private static WebView cachedWebView;
     private static Activity cachedOverlayActivity;
@@ -614,7 +615,7 @@ public final class MaxBridge {
                     boolean.class
             );
             addTab.setAccessible(true);
-            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
+            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", MAX_TAB_EMOTICON, null, false, false, false);
             rebuildTabMappings(filterTabs, tabs);
             hardenMaxTabVisualState(root, filterTabs, activity);
             boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
@@ -923,6 +924,7 @@ public final class MaxBridge {
                         Object tab = tabs.get(i);
                         if (isMaxTab(tab)) {
                             setBooleanField(tab, "isLocked", false);
+                            setObjectField(tab, "emoticon", MAX_TAB_EMOTICON);
                         }
                     }
                 }
@@ -941,6 +943,7 @@ public final class MaxBridge {
                     }
                     if (maxTab) {
                         setBooleanField(tab, "isLocked", false);
+                        setObjectField(tab, "emoticon", MAX_TAB_EMOTICON);
                         setFloatField(child, "progressToLocked", 0f);
                         setFloatField(child, "locIconXOffset", 0f);
                     }
