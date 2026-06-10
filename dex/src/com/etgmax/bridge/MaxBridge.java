@@ -741,11 +741,9 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
-                Object result = method.invoke(original, args);
-                closeOverlayAfterRegularSelection(root);
-                return result;
+                return method.invoke(original, args);
             }
-            if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0) {
+            if ("onPageSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
@@ -754,6 +752,14 @@ public final class MaxBridge {
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
                 return result;
+            }
+            if ("onTabSelected".equals(name) && args != null && args.length > 0) {
+                if (isMaxTab(args[0])) {
+                    rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
+                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    return defaultValue(method.getReturnType());
+                }
+                return method.invoke(original, args);
             }
             return method.invoke(original, args);
         }
@@ -1301,7 +1307,22 @@ public final class MaxBridge {
         }
         ViewGroup parent = (ViewGroup) root;
         View old = parent.findViewWithTag(OVERLAY_TAG);
-        if (old != null) {
+        if (old instanceof FrameLayout) {
+            FrameLayout existing = (FrameLayout) old;
+            updateOverlayBounds(parent, filterTabs, existing);
+            existing.bringToFront();
+            if (Build.VERSION.SDK_INT >= 21) {
+                existing.setElevation(dp(activity, 256));
+                existing.setTranslationZ(dp(activity, 256));
+            }
+            existing.requestFocus();
+            hideSystemBars(activity);
+            WebView webView = findWebView(existing);
+            if (webView != null && !URL.equals(loadUrl)) {
+                webView.loadUrl(loadUrl);
+            }
+            return;
+        } else if (old != null) {
             parent.removeView(old);
             destroyWebViewsLater(parent, old);
         }
@@ -1419,8 +1440,14 @@ public final class MaxBridge {
                     if (selectedId != Integer.MIN_VALUE && findTabPositionById(currentFilterTabs, selectedId) >= 0) {
                         nonMaxFrames[0]++;
                         if (nonMaxFrames[0] >= 2) {
-                            closeOverlayAfterRegularSelection(root);
-                            return;
+                            int maxIndex = findTabPositionById(currentFilterTabs, MAX_TAB_ID);
+                            if (maxIndex >= 0) {
+                                setIntField(currentFilterTabs, "selectedTabId", MAX_TAB_ID);
+                                setIntField(currentFilterTabs, "currentPosition", maxIndex);
+                                setIntField(currentFilterTabs, "oldAnimatedTab", maxIndex);
+                                setBooleanField(currentFilterTabs, "animatingIndicator", false);
+                                notifyTabsChanged(currentFilterTabs);
+                            }
                         }
                     } else {
                         nonMaxFrames[0] = 0;
@@ -1441,6 +1468,25 @@ public final class MaxBridge {
             }
         };
         overlay.postDelayed(guard[0], 250);
+    }
+
+    private static WebView findWebView(View view) {
+        try {
+            if (view instanceof WebView) {
+                return (WebView) view;
+            }
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    WebView found = findWebView(group.getChildAt(i));
+                    if (found != null) {
+                        return found;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static void updateOverlayBounds(ViewGroup root, View filterTabs, FrameLayout overlay) {
