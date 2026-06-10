@@ -6,6 +6,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
@@ -78,6 +79,7 @@ public final class MaxBridge {
     private static boolean previousDialogStoriesStateCaptured;
     private static boolean previousDialogStoriesAllowGlobalUpdates;
     private static boolean previousDialogStoriesAllowGlobalUpdatesCaptured;
+    private static int tabTransitionGeneration;
     private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -148,12 +150,18 @@ public final class MaxBridge {
     }
 
     public static String installWithStatus(Object dialogsActivity) {
+        Object target = null;
         if (dialogsActivity == null) {
-            return "install: fragment=null";
+            target = findExistingDialogsActivity(null);
+        } else {
+            target = resolveDialogsActivity(dialogsActivity);
+            if (target == null) {
+                target = findExistingDialogsActivity(dialogsActivity);
+            }
         }
-        Object target = resolveDialogsActivity(dialogsActivity);
         if (target == null) {
-            return "install: dialogsActivity not resolved from " + dialogsActivity.getClass().getName();
+            return "install: dialogsActivity not resolved from "
+                    + (dialogsActivity != null ? dialogsActivity.getClass().getName() : "null");
         }
         Activity activity = getActivity(target);
         View root = getFragmentView(target);
@@ -358,8 +366,14 @@ public final class MaxBridge {
             setIntField(filterTabs, "currentPosition", maxIndex);
             setIntField(filterTabs, "oldAnimatedTab", maxIndex);
             setBooleanField(filterTabs, "animatingIndicator", false);
-            notifyTabsChanged(filterTabs);
+            hardenFilterTabsDrawState(filterTabs, activity);
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView != null) {
+                listView.invalidate();
+            }
+            filterTabs.invalidate();
         }
+        hardenMaxTabVisualState(root, filterTabs, activity);
         showOverlay(activity, root, filterTabs, dialogsActivity, url);
         return "link: opened " + url;
     }
@@ -543,6 +557,7 @@ public final class MaxBridge {
 
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         if (isMaxTabInstalledAtEnd(filterTabs) && isWrappedMaxDelegate(filterTabs)) {
+            hardenMaxTabVisualState(root, filterTabs, activity);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
@@ -600,6 +615,7 @@ public final class MaxBridge {
             addTab.setAccessible(true);
             addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
             rebuildTabMappings(filterTabs, tabs);
+            hardenMaxTabVisualState(root, filterTabs, activity);
             boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
@@ -613,6 +629,7 @@ public final class MaxBridge {
                 activeDialogsActivity = dialogsActivity;
             }
             notifyTabsChanged(filterTabs);
+            hardenMaxTabVisualState(root, filterTabs, activity);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
                     + " tabs=" + tabs.size()
                     + " wrapped=" + wrapped
@@ -692,7 +709,9 @@ public final class MaxBridge {
                 return false;
             }
             InvocationHandler handler = Proxy.getInvocationHandler(current);
-            return handler != null && handler.getClass().getName().indexOf("MaxBridge$MaxTabDelegateHandler") >= 0;
+            return handler != null
+                    && handler.getClass().getName().indexOf("MaxBridge$MaxTabDelegateHandler") >= 0
+                    && handler.getClass().getClassLoader() == MaxBridge.class.getClassLoader();
         } catch (Throwable ignored) {
             return false;
         }
@@ -769,6 +788,7 @@ public final class MaxBridge {
     }
 
     private static void notifyTabsChanged(View filterTabs) {
+        hardenFilterTabsDrawState(filterTabs, null);
         try {
             Field adapterField = findField(filterTabs.getClass(), "adapter");
             if (adapterField != null) {
@@ -787,6 +807,114 @@ public final class MaxBridge {
             filterTabs.invalidate();
         } catch (Throwable ignored) {
         }
+        hardenFilterTabsDrawState(filterTabs, null);
+    }
+
+    private static void hardenMaxTabVisualState(View root, View filterTabs, Activity activity) {
+        hardenFilterTabsDrawState(filterTabs, activity);
+        if (root != null) {
+            root.post(() -> hardenFilterTabsDrawState(filterTabs, activity));
+            root.postDelayed(() -> hardenFilterTabsDrawState(filterTabs, activity), 80);
+            root.postDelayed(() -> hardenFilterTabsDrawState(filterTabs, activity), 240);
+        }
+    }
+
+    private static void hardenFilterTabsDrawState(View filterTabs, Activity activity) {
+        ensureFilterTabsLockDrawable(filterTabs, activity);
+        sanitizeMaxTabState(filterTabs);
+    }
+
+    private static void ensureFilterTabsLockDrawable(View filterTabs, Activity activity) {
+        if (filterTabs == null) {
+            return;
+        }
+        try {
+            Object current = getFieldObject(filterTabs, "lockDrawable");
+            if (current instanceof Drawable) {
+                return;
+            }
+            Drawable drawable = null;
+            Context context = activity != null ? activity : filterTabs.getContext();
+            if (context != null) {
+                try {
+                    Class<?> drawables = Class.forName("org.telegram.messenger.R$drawable");
+                    Field field = findField(drawables, "other_lockedfolders");
+                    if (field != null) {
+                        field.setAccessible(true);
+                        int resId = field.getInt(null);
+                        if (resId != 0) {
+                            drawable = Build.VERSION.SDK_INT >= 21
+                                    ? context.getDrawable(resId)
+                                    : context.getResources().getDrawable(resId);
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            if (drawable == null) {
+                drawable = new ColorDrawable(Color.TRANSPARENT);
+            }
+            setObjectField(filterTabs, "lockDrawable", drawable);
+            setIntField(filterTabs, "lockDrawableColor", Integer.MIN_VALUE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void sanitizeMaxTabState(View filterTabs) {
+        if (filterTabs == null) {
+            return;
+        }
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField != null) {
+                tabsField.setAccessible(true);
+                Object value = tabsField.get(filterTabs);
+                if (value instanceof ArrayList) {
+                    ArrayList tabs = (ArrayList) value;
+                    for (int i = 0; i < tabs.size(); i++) {
+                        Object tab = tabs.get(i);
+                        if (isMaxTab(tab)) {
+                            setBooleanField(tab, "isLocked", false);
+                        }
+                    }
+                }
+            }
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) listView;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    View child = group.getChildAt(i);
+                    ensureDrawableField(child, "icon");
+                    ensureDrawableField(child, "iconAnimateInDrawable");
+                    ensureDrawableField(child, "iconAnimateOutDrawable");
+                    Object tab = getFieldObject(child, "currentTab");
+                    if (isMaxTab(tab)) {
+                        setBooleanField(tab, "isLocked", false);
+                        setFloatField(child, "progressToLocked", 0f);
+                        setFloatField(child, "locIconXOffset", 0f);
+                    }
+                    child.invalidate();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void ensureDrawableField(Object target, String name) {
+        try {
+            Object value = getFieldObject(target, name);
+            if (!(value instanceof Drawable)) {
+                setObjectField(target, name, new ColorDrawable(Color.TRANSPARENT));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void showMaxOverlayFromTab(Activity activity, View root, View filterTabs, Object dialogsActivity) {
+        cancelRegularSelectionRepairs();
+        setMaxTabSelectionFields(filterTabs);
+        hardenMaxTabVisualState(root, filterTabs, activity);
+        showOverlay(activity, root, filterTabs, dialogsActivity);
     }
 
     private static final class MaxTabDelegateHandler implements InvocationHandler {
@@ -812,7 +940,7 @@ public final class MaxBridge {
             if ("didSelectTab".equals(name) && args != null && args.length > 0) {
                 if (isMaxTabView(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
-                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
                 return method.invoke(original, args);
@@ -820,9 +948,10 @@ public final class MaxBridge {
             if ("onPageSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
-                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
+                int transitionGeneration = beginTabTransition();
                 int targetId = getRegularTargetTabId(filterTabs, args);
                 boolean leavingMax = isLeavingMax(root, filterTabs);
                 if (leavingMax) {
@@ -831,14 +960,14 @@ public final class MaxBridge {
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
                 if (leavingMax) {
-                    scheduleRegularSelectionRepair(dialogsActivity, root, targetId);
+                    scheduleRegularSelectionRepair(dialogsActivity, root, targetId, transitionGeneration);
                 }
                 return result;
             }
             if ("onTabSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
-                    showOverlay(activity, root, filterTabs, dialogsActivity);
+                    showMaxOverlayFromTab(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
                 return method.invoke(original, args);
@@ -1058,6 +1187,27 @@ public final class MaxBridge {
         return id != Integer.MIN_VALUE && id != MAX_TAB_ID && findTabPositionById(filterTabs, id) >= 0;
     }
 
+    private static boolean setMaxTabSelectionFields(View filterTabs) {
+        try {
+            int pos = findTabPositionById(filterTabs, MAX_TAB_ID);
+            if (pos < 0) {
+                return false;
+            }
+            setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
+            setIntField(filterTabs, "currentPosition", pos);
+            setIntField(filterTabs, "oldAnimatedTab", pos);
+            hardenFilterTabsDrawState(filterTabs, null);
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView != null) {
+                listView.invalidate();
+            }
+            filterTabs.invalidate();
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private static boolean setFilterTabsSelectionFields(View filterTabs, int id) {
         try {
             int pos = findTabPositionById(filterTabs, id);
@@ -1114,11 +1264,23 @@ public final class MaxBridge {
         }
     }
 
+    private static int beginTabTransition() {
+        return ++tabTransitionGeneration;
+    }
+
+    private static void cancelRegularSelectionRepairs() {
+        tabTransitionGeneration++;
+    }
+
     private static void scheduleRegularSelectionRepair(Object dialogsActivity, View root, int targetId) {
+        scheduleRegularSelectionRepair(dialogsActivity, root, targetId, tabTransitionGeneration);
+    }
+
+    private static void scheduleRegularSelectionRepair(Object dialogsActivity, View root, int targetId, int transitionGeneration) {
         if (dialogsActivity == null || root == null || targetId == Integer.MIN_VALUE || targetId == MAX_TAB_ID) {
             return;
         }
-        Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId);
+        Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId, transitionGeneration);
         try {
             root.postDelayed(repair, 120);
             root.postDelayed(repair, 420);
@@ -1127,7 +1289,14 @@ public final class MaxBridge {
     }
 
     private static void repairRegularSelection(Object dialogsActivity, int targetId) {
+        repairRegularSelection(dialogsActivity, targetId, tabTransitionGeneration);
+    }
+
+    private static void repairRegularSelection(Object dialogsActivity, int targetId, int transitionGeneration) {
         try {
+            if (transitionGeneration != tabTransitionGeneration) {
+                return;
+            }
             View root = getFragmentView(dialogsActivity);
             View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
             if (root == null || filterTabs == null || !isRegularTabId(filterTabs, targetId)) {
@@ -1854,13 +2023,15 @@ public final class MaxBridge {
                 invalidFrames[0] = 0;
                 int selectedId = getIntField(currentFilterTabs, "selectedTabId", Integer.MIN_VALUE);
                 if (selectedId != MAX_TAB_ID) {
+                    if (getBooleanField(currentFilterTabs, "animatingIndicator", false) || !currentFilterTabs.isEnabled()) {
+                        overlay.postDelayed(guard[0], 120);
+                        return;
+                    }
                     if (selectedId != Integer.MIN_VALUE && findTabPositionById(currentFilterTabs, selectedId) >= 0) {
-                        nonMaxFrames[0]++;
-                        if (nonMaxFrames[0] >= 2) {
-                            closeOverlayAfterRegularSelection(root);
-                            scheduleRegularSelectionRepair(dialogsActivity, root, selectedId);
-                            return;
-                        }
+                        int transitionGeneration = beginTabTransition();
+                        closeOverlayAfterRegularSelection(root);
+                        scheduleRegularSelectionRepair(dialogsActivity, root, selectedId, transitionGeneration);
+                        return;
                     } else {
                         nonMaxFrames[0] = 0;
                     }
@@ -3436,6 +3607,20 @@ public final class MaxBridge {
             if (field != null) {
                 field.setAccessible(true);
                 field.setFloat(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setObjectField(Object target, String name, Object value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field != null) {
+                field.setAccessible(true);
+                field.set(target, value);
             }
         } catch (Throwable ignored) {
         }

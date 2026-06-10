@@ -21,7 +21,7 @@ __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
 DEFAULT_DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-max-tab/v2.0.0/etgmax_v2/build/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "15768e25e3df2806c4aa55314a94d09e291dfe9eaf01ca5a0cbd83b696e0e051"
+DEFAULT_DEX_SHA256 = "816bc77104a824e3017af7d259c667ee630f5927495530434f362d503d11e30c"
 
 
 class _AfterCreateView(MethodHook):
