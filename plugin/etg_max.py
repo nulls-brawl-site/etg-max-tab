@@ -15,13 +15,13 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.3.3/etg-max-bridge.dex"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.3.4/etg-max-bridge.dex"
 DEFAULT_DEX_SHA256 = "c9176d1006673a32ca914dfd159b2a7a5173afa4b5b809917c2d97dc8a376c0c"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
@@ -106,6 +106,7 @@ class MaxTabPlugin(BasePlugin):
 
     def _install_hooks(self):
         DialogsActivity = self._class_ref("org.telegram.ui.DialogsActivity")
+        MainTabsActivity = self._class_ref("org.telegram.ui.MainTabsActivity")
         Context = self._class_ref("android.content.Context")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
@@ -123,7 +124,23 @@ class MaxTabPlugin(BasePlugin):
             destroy = DialogsActivity.getDeclaredMethod("onFragmentDestroy")
             destroy.setAccessible(True)
             self.hook_method(destroy, _BeforeDestroy(self))
-            self._log("MAX Tab: hooks installed")
+
+            if MainTabsActivity is not None:
+                main_create_view = MainTabsActivity.getDeclaredMethod("createView", Context)
+                main_create_view.setAccessible(True)
+                self.hook_method(main_create_view, _AfterCreateView(self))
+
+                main_resume = MainTabsActivity.getDeclaredMethod("onResume")
+                main_resume.setAccessible(True)
+                self.hook_method(main_resume, _AfterCreateView(self))
+
+                Bundle = self._class_ref("android.os.Bundle")
+                if Bundle is not None:
+                    prepare_dialogs = MainTabsActivity.getDeclaredMethod("prepareDialogsActivity", Bundle)
+                    prepare_dialogs.setAccessible(True)
+                    self.hook_method(prepare_dialogs, _AfterCreateView(self))
+
+            self._log(f"MAX Tab: hooks installed mainTabs={MainTabsActivity is not None}")
         except Exception as e:
             self._log(f"MAX Tab: hook install failed: {e}")
 
