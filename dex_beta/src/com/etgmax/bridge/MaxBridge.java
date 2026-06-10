@@ -150,12 +150,18 @@ public final class MaxBridge {
     }
 
     public static String installWithStatus(Object dialogsActivity) {
+        Object target = null;
         if (dialogsActivity == null) {
-            return "install: fragment=null";
+            target = findExistingDialogsActivity(null);
+        } else {
+            target = resolveDialogsActivity(dialogsActivity);
+            if (target == null) {
+                target = findExistingDialogsActivity(dialogsActivity);
+            }
         }
-        Object target = resolveDialogsActivity(dialogsActivity);
         if (target == null) {
-            return "install: dialogsActivity not resolved from " + dialogsActivity.getClass().getName();
+            return "install: dialogsActivity not resolved from "
+                    + (dialogsActivity != null ? dialogsActivity.getClass().getName() : "null");
         }
         Activity activity = getActivity(target);
         View root = getFragmentView(target);
@@ -552,6 +558,8 @@ public final class MaxBridge {
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         if (isMaxTabInstalledAtEnd(filterTabs) && isWrappedMaxDelegate(filterTabs)) {
             hardenMaxTabVisualState(root, filterTabs, activity);
+            notifyTabsChanged(filterTabs);
+            scheduleTabsRefresh(root, filterTabs, activity);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
@@ -624,6 +632,7 @@ public final class MaxBridge {
             }
             notifyTabsChanged(filterTabs);
             hardenMaxTabVisualState(root, filterTabs, activity);
+            scheduleTabsRefresh(root, filterTabs, activity);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
                     + " tabs=" + tabs.size()
                     + " wrapped=" + wrapped
@@ -780,6 +789,7 @@ public final class MaxBridge {
     }
 
     private static void notifyTabsChanged(View filterTabs) {
+        hardenFilterTabsDrawState(filterTabs, null);
         try {
             Field adapterField = findField(filterTabs.getClass(), "adapter");
             if (adapterField != null) {
@@ -796,6 +806,28 @@ public final class MaxBridge {
         try {
             filterTabs.requestLayout();
             filterTabs.invalidate();
+        } catch (Throwable ignored) {
+        }
+        hardenFilterTabsDrawState(filterTabs, null);
+    }
+
+    private static void scheduleTabsRefresh(View root, View filterTabs, Activity activity) {
+        if (root == null || filterTabs == null) {
+            return;
+        }
+        try {
+            root.post(() -> {
+                hardenFilterTabsDrawState(filterTabs, activity);
+                notifyTabsChanged(filterTabs);
+            });
+            root.postDelayed(() -> {
+                hardenFilterTabsDrawState(filterTabs, activity);
+                notifyTabsChanged(filterTabs);
+            }, 180);
+            root.postDelayed(() -> {
+                hardenFilterTabsDrawState(filterTabs, activity);
+                notifyTabsChanged(filterTabs);
+            }, 650);
         } catch (Throwable ignored) {
         }
     }
