@@ -38,4 +38,6 @@ After publishing, install `plugin/etg_max.py` into:
 
 The Telegram-like skin is based on the current public `web.max.ru` CSS tokens, the `maxplus` open-source chat component names, and a local-only WebSocket change probe inspired by public MAX WebView monitor projects. It does not export tokens, packets, chats, or messages.
 
+The loader stores the downloaded dex under ExteraGram's private plugin directory: `get_plugins_dir()/etg_max/etg-max-bridge.dex`.
+
 See `docs/research.md` for source links and exact implementation assumptions.

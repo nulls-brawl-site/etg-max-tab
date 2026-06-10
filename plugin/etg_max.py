@@ -3,9 +3,10 @@ import os
 import urllib.request
 from typing import Any, List
 
+from android_utils import copy_to_clipboard
 from base_plugin import BasePlugin, MethodHook
 from client_utils import PLUGINS_QUEUE, run_on_queue
-from file_utils import ensure_dir_exists
+from file_utils import ensure_dir_exists, get_plugins_dir
 from hook_utils import find_class
 from java import jclass
 from java.lang import ClassLoader
@@ -15,14 +16,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
-__sdk_version__ = ">=1.4.3.6"
+__sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
 DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/latest/download/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c"
+DEFAULT_DEX_SHA256 = "ac842961ad48cbf041683719f031cf400b40f2eb34932f59d5c91c62768e26d4"
 
 
 class _AfterCreateView(MethodHook):
@@ -51,6 +52,7 @@ class _BeforeDestroy(MethodHook):
 
 class MaxTabPlugin(BasePlugin):
     def on_plugin_load(self):
+        self._log_lines = []
         self._bridge = None
         self._bridge_ready = False
         self._pending_fragments = []
@@ -85,6 +87,12 @@ class MaxTabPlugin(BasePlugin):
                 subtext="Leave empty only while testing your own build.",
                 icon="msg_info",
             ),
+            Text(
+                text="Copy logs",
+                subtext="Copies loader status, dex path, URL, and checksum.",
+                icon="msg_copy",
+                on_click=lambda _view: self.copy_logs(),
+            ),
             Text(text="Reload plugin after changing URL or checksum.", icon="msg_info"),
         ]
 
@@ -93,7 +101,7 @@ class MaxTabPlugin(BasePlugin):
         Context = find_class("android.content.Context")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
-            self.log("MAX Tab: DialogsActivity/Context not found")
+            self._log("MAX Tab: DialogsActivity/Context not found")
             return
         try:
             create_view = DialogsActivity.getDeclaredMethod("createView", Context)
@@ -107,9 +115,9 @@ class MaxTabPlugin(BasePlugin):
             destroy = DialogsActivity.getDeclaredMethod("onFragmentDestroy")
             destroy.setAccessible(True)
             self.hook_method(destroy, _BeforeDestroy(self))
-            self.log("MAX Tab: hooks installed")
+            self._log("MAX Tab: hooks installed")
         except Exception as e:
-            self.log(f"MAX Tab: hook install failed: {e}")
+            self._log(f"MAX Tab: hook install failed: {e}")
 
     def _load_bridge(self):
         try:
@@ -117,50 +125,51 @@ class MaxTabPlugin(BasePlugin):
             if not dex_path:
                 return
             ctx = jclass("org.telegram.messenger.ApplicationLoader").applicationContext
-            opt_dir = os.path.join(str(ctx.getCodeCacheDir()), "etg_max_dex_opt")
+            opt_dir = os.path.join(self._dex_dir(), "dex_opt")
             ensure_dir_exists(opt_dir)
             DexClassLoader = jclass("dalvik.system.DexClassLoader")
             loader = DexClassLoader(dex_path, opt_dir, None, ctx.getClassLoader() or ClassLoader.getSystemClassLoader())
             self._bridge = loader.loadClass(ENTRY_CLASS)
             self._bridge_ready = True
-            self.log("MAX Tab: dex bridge loaded")
+            self._log(f"MAX Tab: dex bridge loaded from {dex_path}")
             for fragment in list(self._pending_fragments):
                 self.install_tab(fragment)
             self._pending_fragments = []
         except Exception as e:
-            self.log(f"MAX Tab: dex load failed: {e}")
+            self._log(f"MAX Tab: dex load failed: {e}")
 
     def _ensure_dex(self):
-        ctx = jclass("org.telegram.messenger.ApplicationLoader").applicationContext
-        dex_dir = os.path.join(str(ctx.getFilesDir()), "etg_max")
+        dex_dir = self._dex_dir()
         ensure_dir_exists(dex_dir)
         dex_path = os.path.join(dex_dir, "etg-max-bridge.dex")
         url = self.get_setting("dex_url", DEFAULT_DEX_URL)
         expected_sha = (self.get_setting("dex_sha256", DEFAULT_DEX_SHA256) or "").strip().lower()
         if os.path.exists(dex_path) and os.path.getsize(dex_path) > 1024:
             if not expected_sha or self._sha256(dex_path) == expected_sha:
+                self._log(f"MAX Tab: using cached dex at {dex_path}")
                 return dex_path
         if not self.get_setting("auto_download", True):
-            self.log("MAX Tab: dex missing and auto-download is off")
+            self._log(f"MAX Tab: dex missing at {dex_path} and auto-download is off")
             return None
         tmp_path = dex_path + ".tmp"
         try:
+            self._log(f"MAX Tab: downloading dex to {dex_path}")
             with urllib.request.urlopen(url, timeout=25) as response:
                 data = response.read()
             if len(data) < 1024:
-                self.log("MAX Tab: downloaded dex is too small")
+                self._log("MAX Tab: downloaded dex is too small")
                 return None
             got_sha = hashlib.sha256(data).hexdigest()
             if expected_sha and got_sha != expected_sha:
-                self.log(f"MAX Tab: dex sha mismatch: {got_sha}")
+                self._log(f"MAX Tab: dex sha mismatch: {got_sha}")
                 return None
             with open(tmp_path, "wb") as f:
                 f.write(data)
             os.replace(tmp_path, dex_path)
-            self.log(f"MAX Tab: dex downloaded sha256={got_sha}")
+            self._log(f"MAX Tab: dex downloaded sha256={got_sha}")
             return dex_path
         except Exception as e:
-            self.log(f"MAX Tab: dex download failed: {e}")
+            self._log(f"MAX Tab: dex download failed: {e}")
             return None
         finally:
             try:
@@ -179,7 +188,7 @@ class MaxTabPlugin(BasePlugin):
         try:
             self._bridge.install(fragment)
         except Exception as e:
-            self.log(f"MAX Tab: install failed: {e}")
+            self._log(f"MAX Tab: install failed: {e}")
 
     def hide_tab(self, fragment):
         if self._bridge_ready and fragment is not None:
@@ -187,6 +196,33 @@ class MaxTabPlugin(BasePlugin):
                 self._bridge.hide(fragment)
             except Exception:
                 return
+
+    def copy_logs(self):
+        dex_path = os.path.join(self._dex_dir(), "etg-max-bridge.dex")
+        lines = [
+            "MAX Tab logs",
+            f"plugin_version={__version__}",
+            f"sdk_version={__sdk_version__}",
+            f"dex_url={self.get_setting('dex_url', DEFAULT_DEX_URL)}",
+            f"dex_sha256={self.get_setting('dex_sha256', DEFAULT_DEX_SHA256)}",
+            f"dex_path={dex_path}",
+            f"dex_exists={os.path.exists(dex_path)}",
+            f"bridge_ready={self._bridge_ready}",
+            "",
+        ]
+        lines.extend(getattr(self, "_log_lines", []))
+        copy_to_clipboard("\n".join(lines))
+
+    def _dex_dir(self):
+        return os.path.join(get_plugins_dir(), __id__)
+
+    def _log(self, message):
+        try:
+            self._log_lines.append(str(message))
+            self._log_lines = self._log_lines[-120:]
+        except Exception:
+            return
+        self.log(message)
 
     def _sha256(self, path):
         h = hashlib.sha256()

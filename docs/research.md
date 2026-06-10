@@ -13,4 +13,5 @@ Implementation assumptions:
 
 - Login, session storage, phone auth, QR auth, and the actual chat transport stay fully inside the official `https://web.max.ru/` page.
 - The dex bridge creates only the Telegram-side tab, the full-screen overlay, WebView settings, and a CSS/JS restyle layer.
+- The MAX folder tab is injected through `FilterTabsView.addTab(...)` and its delegate is wrapped so the tab is rendered/reordered by ExteraGram while only MAX tab clicks are intercepted.
 - DOM selectors intentionally prefer roles, `data-bubbles-variant`, and semantic class fragments over exact generated Svelte classes.

@@ -21,9 +21,13 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 
 public final class MaxBridge {
+    private static final int MAX_TAB_ID = 0x4d415858;
     private static final String TAB_TAG = "etg_max_tab";
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
@@ -39,6 +43,9 @@ public final class MaxBridge {
         View root = getFragmentView(dialogsActivity);
         View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
         if (activity == null || root == null || filterTabs == null) {
+            return;
+        }
+        if (installFilterTabsView(dialogsActivity, activity, root, filterTabs)) {
             return;
         }
         ViewGroup tabsContainer = findTabsContainer(filterTabs);
@@ -58,6 +65,169 @@ public final class MaxBridge {
             } catch (Throwable ignored) {
             }
         });
+    }
+
+    private static boolean installFilterTabsView(Object dialogsActivity, Activity activity, View root, View filterTabs) {
+        if (!filterTabs.getClass().getName().equals("org.telegram.ui.Components.FilterTabsView")) {
+            return false;
+        }
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField == null) {
+                return false;
+            }
+            tabsField.setAccessible(true);
+            Object tabsValue = tabsField.get(filterTabs);
+            if (!(tabsValue instanceof ArrayList)) {
+                return false;
+            }
+            ArrayList<?> tabs = (ArrayList<?>) tabsValue;
+            for (Object tab : tabs) {
+                if (getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
+                    wrapFilterTabsDelegate(activity, root, filterTabs);
+                    return true;
+                }
+            }
+
+            Method addTab = filterTabs.getClass().getMethod(
+                    "addTab",
+                    int.class,
+                    int.class,
+                    String.class,
+                    String.class,
+                    ArrayList.class,
+                    boolean.class,
+                    boolean.class,
+                    boolean.class
+            );
+            addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
+            filterTabs.setTag(TAB_TAG);
+            wrapFilterTabsDelegate(activity, root, filterTabs);
+            notifyTabsChanged(filterTabs);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void wrapFilterTabsDelegate(Activity activity, View root, View filterTabs) {
+        try {
+            Field delegateField = findField(filterTabs.getClass(), "delegate");
+            if (delegateField == null) {
+                return;
+            }
+            delegateField.setAccessible(true);
+            Object original = delegateField.get(filterTabs);
+            if (original == null || isOurProxy(original)) {
+                return;
+            }
+            Class<?> delegateInterface = Class.forName("org.telegram.ui.Components.FilterTabsView$FilterTabsViewDelegate");
+            InvocationHandler handler = new MaxTabDelegateHandler(original, activity, root, filterTabs);
+            Object proxy = Proxy.newProxyInstance(delegateInterface.getClassLoader(), new Class[]{delegateInterface}, handler);
+            delegateField.set(filterTabs, proxy);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isOurProxy(Object value) {
+        try {
+            return Proxy.isProxyClass(value.getClass()) && Proxy.getInvocationHandler(value) instanceof MaxTabDelegateHandler;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void notifyTabsChanged(View filterTabs) {
+        try {
+            Field adapterField = findField(filterTabs.getClass(), "adapter");
+            if (adapterField != null) {
+                adapterField.setAccessible(true);
+                Object adapter = adapterField.get(filterTabs);
+                if (adapter != null) {
+                    Method notify = adapter.getClass().getMethod("notifyDataSetChanged");
+                    notify.invoke(adapter);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            filterTabs.requestLayout();
+            filterTabs.invalidate();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static final class MaxTabDelegateHandler implements InvocationHandler {
+        private final Object original;
+        private final Activity activity;
+        private final View root;
+        private final View filterTabs;
+
+        MaxTabDelegateHandler(Object original, Activity activity, View root, View filterTabs) {
+            this.original = original;
+            this.activity = activity;
+            this.root = root;
+            this.filterTabs = filterTabs;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            String name = method.getName();
+            if ("didSelectTab".equals(name) && args != null && args.length > 0 && isMaxTabView(args[0])) {
+                showOverlay(activity, root, filterTabs);
+                return true;
+            }
+            if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0 && isMaxTab(args[0])) {
+                showOverlay(activity, root, filterTabs);
+                return defaultValue(method.getReturnType());
+            }
+            return method.invoke(original, args);
+        }
+    }
+
+    private static boolean isMaxTabView(Object tabView) {
+        try {
+            Field field = findField(tabView.getClass(), "currentTab");
+            if (field == null) {
+                return false;
+            }
+            field.setAccessible(true);
+            return isMaxTab(field.get(tabView));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isMaxTab(Object tab) {
+        return getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID;
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        if (type == Boolean.TYPE) {
+            return false;
+        }
+        if (type == Byte.TYPE) {
+            return (byte) 0;
+        }
+        if (type == Short.TYPE) {
+            return (short) 0;
+        }
+        if (type == Character.TYPE) {
+            return (char) 0;
+        }
+        if (type == Integer.TYPE) {
+            return 0;
+        }
+        if (type == Long.TYPE) {
+            return 0L;
+        }
+        if (type == Float.TYPE) {
+            return 0f;
+        }
+        if (type == Double.TYPE) {
+            return 0d;
+        }
+        return null;
     }
 
     public static void hide(Object dialogsActivity) {
@@ -332,6 +502,22 @@ public final class MaxBridge {
             }
         }
         return null;
+    }
+
+    private static int getIntField(Object target, String name, int fallback) {
+        if (target == null) {
+            return fallback;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return fallback;
+            }
+            field.setAccessible(true);
+            return field.getInt(target);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
     }
 
     private static int resolveColor(String className, String fieldName, int fallback) {
