@@ -370,6 +370,14 @@ public final class MaxBridge {
     }
 
     private static void restoreSelectionIfCurrentMax() {
+        restoreSelectionState(true, true);
+    }
+
+    private static int restoreSelectionFieldsOnly() {
+        return restoreSelectionState(false, false);
+    }
+
+    private static int restoreSelectionState(boolean dispatchDelegate, boolean reloadDialogs) {
         View filterTabs = activeFilterTabs;
         Object originalDelegate = activeOriginalDelegate;
         Class<?> delegateType = activeDelegateType;
@@ -382,7 +390,7 @@ public final class MaxBridge {
             if (filterTabs == null || getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID) {
                 restoreTabId = Integer.MIN_VALUE;
                 restorePosition = -1;
-                return;
+                return Integer.MIN_VALUE;
             }
             int pos = restorePosition;
             int id = restoreTabId;
@@ -413,18 +421,25 @@ public final class MaxBridge {
                 setBooleanField(filterTabs, "animatingIndicator", false);
                 filterTabs.setEnabled(true);
                 notifyTabsChanged(filterTabs);
-                Object tab = getTabAt(filterTabs, pos);
-                dispatchRestoreSelection(originalDelegate, delegateType, tab);
                 if (dialogsActivity != null) {
+                    setDialogsSelectedType(dialogsActivity, 0, id);
+                }
+                if (dispatchDelegate) {
+                    Object tab = getTabAt(filterTabs, pos);
+                    dispatchRestoreSelection(originalDelegate, delegateType, tab);
+                }
+                if (reloadDialogs && dialogsActivity != null) {
                     int currentType = getDialogsSelectedType(dialogsActivity, 0);
                     forceDialogsSwitch(dialogsActivity, currentType == id ? Boolean.FALSE : Boolean.TRUE);
                 }
+                return id;
             }
         } catch (Throwable ignored) {
         } finally {
             restoreTabId = Integer.MIN_VALUE;
             restorePosition = -1;
         }
+        return Integer.MIN_VALUE;
     }
 
     private static Object getTabAt(View filterTabs, int position) {
@@ -497,6 +512,26 @@ public final class MaxBridge {
             return getIntField(pages[pageIndex], "selectedType", Integer.MIN_VALUE);
         } catch (Throwable ignored) {
             return Integer.MIN_VALUE;
+        }
+    }
+
+    private static void setDialogsSelectedType(Object dialogsActivity, int pageIndex, int selectedType) {
+        try {
+            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
+            if (viewPagesField == null) {
+                return;
+            }
+            viewPagesField.setAccessible(true);
+            Object value = viewPagesField.get(dialogsActivity);
+            if (!(value instanceof Object[])) {
+                return;
+            }
+            Object[] pages = (Object[]) value;
+            if (pageIndex < 0 || pageIndex >= pages.length || pages[pageIndex] == null) {
+                return;
+            }
+            setIntField(pages[pageIndex], "selectedType", selectedType);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -637,6 +672,55 @@ public final class MaxBridge {
         }
     }
 
+    private static void closeOverlayForSearch(View root, Object dialogsActivity) {
+        try {
+            if (root instanceof ViewGroup) {
+                View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
+                if (overlay != null) {
+                    ((ViewGroup) root).removeView(overlay);
+                    destroyWebViewsLater(root, overlay);
+                }
+            }
+            int restoredId = restoreSelectionFieldsOnly();
+            scheduleSearchSafeReload(dialogsActivity, restoredId);
+        } finally {
+            restoreSystemBars();
+        }
+    }
+
+    private static void scheduleSearchSafeReload(Object dialogsActivity, int restoredId) {
+        if (dialogsActivity == null || restoredId == Integer.MIN_VALUE || restoredId == MAX_TAB_ID) {
+            return;
+        }
+        View root = getFragmentView(dialogsActivity);
+        if (root == null) {
+            return;
+        }
+        final Runnable[] reload = new Runnable[1];
+        final int[] attempts = new int[]{0};
+        reload[0] = () -> {
+            try {
+                if (dialogsActivity == null) {
+                    return;
+                }
+                if (!isSearchVisible(dialogsActivity)) {
+                    setDialogsSelectedType(dialogsActivity, 0, restoredId);
+                    forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
+                    return;
+                }
+                attempts[0]++;
+                if (attempts[0] < 80) {
+                    View currentRoot = getFragmentView(dialogsActivity);
+                    if (currentRoot != null) {
+                        currentRoot.postDelayed(reload[0], 500);
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        };
+        root.postDelayed(reload[0], 350);
+    }
+
     private static void destroyWebViewsLater(View host, View view) {
         try {
             host.post(() -> destroyWebViews(view));
@@ -762,6 +846,7 @@ public final class MaxBridge {
 
     private static void scheduleOverlayGuard(Activity activity, ViewGroup root, View filterTabs, FrameLayout overlay, Object dialogsActivity) {
         final Runnable[] guard = new Runnable[1];
+        final int[] invalidFrames = new int[]{0};
         guard[0] = () -> {
             try {
                 if (overlay.getParent() == null) {
@@ -769,15 +854,25 @@ public final class MaxBridge {
                     restoreSystemBars();
                     return;
                 }
-                if (!root.isShown()
-                        || !filterTabs.isShown()
-                        || activeFilterTabs != filterTabs
-                        || getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID
-                        || isSearchVisible(dialogsActivity)) {
-                    hideOverlay(root);
+                if (isSearchVisible(dialogsActivity)) {
+                    closeOverlayForSearch(root, dialogsActivity);
                     return;
                 }
-                updateOverlayBounds(root, filterTabs, overlay);
+                View currentFilterTabs = activeFilterTabs != null ? activeFilterTabs : filterTabs;
+                if (!root.isShown() || currentFilterTabs == null || !currentFilterTabs.isShown()) {
+                    invalidFrames[0]++;
+                    if (invalidFrames[0] >= 4) {
+                        hideOverlay(root);
+                        return;
+                    }
+                    overlay.postDelayed(guard[0], 250);
+                    return;
+                }
+                invalidFrames[0] = 0;
+                if (getIntField(currentFilterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID) {
+                    keepMaxSelected(currentFilterTabs);
+                }
+                updateOverlayBounds(root, currentFilterTabs, overlay);
                 overlay.bringToFront();
                 if (Build.VERSION.SDK_INT >= 21) {
                     overlay.setElevation(dp(activity, 256));
@@ -790,6 +885,21 @@ public final class MaxBridge {
             }
         };
         overlay.postDelayed(guard[0], 250);
+    }
+
+    private static void keepMaxSelected(View filterTabs) {
+        try {
+            int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
+            if (maxIndex < 0) {
+                return;
+            }
+            setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
+            setIntField(filterTabs, "currentPosition", maxIndex);
+            setIntField(filterTabs, "oldAnimatedTab", maxIndex);
+            setBooleanField(filterTabs, "animatingIndicator", false);
+            notifyTabsChanged(filterTabs);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void updateOverlayBounds(ViewGroup root, View filterTabs, FrameLayout overlay) {
