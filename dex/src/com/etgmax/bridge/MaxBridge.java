@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.util.SparseIntArray;
 import android.util.TypedValue;
@@ -31,6 +32,7 @@ import java.util.ArrayList;
 public final class MaxBridge {
     private static final int MAX_TAB_ID = 0x4d415858;
     private static final String TAB_TAG = "etg_max_tab";
+    private static final String BUTTON_TAG = "etg_max_button";
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
 
@@ -136,13 +138,16 @@ public final class MaxBridge {
         if (!(root instanceof ViewGroup)) {
             return "button: root not ViewGroup";
         }
-        ViewGroup parent = (ViewGroup) root;
-        View existing = parent.findViewWithTag(TAB_TAG);
-        if (existing != null && existing != filterTabs) {
+        ViewGroup rootGroup = (ViewGroup) root;
+        cleanupOldStandaloneButton(rootGroup, filterTabs);
+        ViewGroup parent = filterTabs instanceof ViewGroup ? (ViewGroup) filterTabs : rootGroup;
+        View existing = parent.findViewWithTag(BUTTON_TAG);
+        if (existing != null) {
             if (existing.getParent() == parent) {
                 existing.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
                 existing.bringToFront();
-                return "button: existing standalone";
+                updateStandaloneButtonState(root, rootGroup.findViewWithTag(OVERLAY_TAG) != null);
+                return "button: existing embedded";
             }
             if (existing.getParent() instanceof ViewGroup) {
                 ((ViewGroup) existing.getParent()).removeView(existing);
@@ -150,26 +155,37 @@ public final class MaxBridge {
         }
 
         TextView button = createTab(activity);
-        button.setTag(TAB_TAG);
+        button.setTag(BUTTON_TAG);
         button.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
         parent.addView(button, makeButtonLayoutParams(parent, filterTabs));
         button.bringToFront();
-        updateStandaloneButtonState(root, parent.findViewWithTag(OVERLAY_TAG) != null);
-        return "button: added standalone";
+        updateStandaloneButtonState(root, rootGroup.findViewWithTag(OVERLAY_TAG) != null);
+        return "button: added embedded parent=" + parent.getClass().getName();
+    }
+
+    private static void cleanupOldStandaloneButton(ViewGroup root, View filterTabs) {
+        try {
+            View old = root.findViewWithTag(TAB_TAG);
+            if (old != null && old != filterTabs && old.getParent() instanceof ViewGroup) {
+                ((ViewGroup) old.getParent()).removeView(old);
+            }
+            View wrongButton = root.findViewWithTag(BUTTON_TAG);
+            if (wrongButton != null && wrongButton.getParent() != filterTabs && wrongButton.getParent() instanceof ViewGroup) {
+                ((ViewGroup) wrongButton.getParent()).removeView(wrongButton);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static ViewGroup.LayoutParams makeButtonLayoutParams(ViewGroup parent, View filterTabs) {
-        int height = Math.max(filterTabs.getHeight(), dp(parent.getContext(), 44));
+        int height = ViewGroup.LayoutParams.MATCH_PARENT;
         int width = dp(parent.getContext(), 64);
-        int top = estimateViewTop(parent, filterTabs);
         if (parent instanceof FrameLayout) {
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.RIGHT);
-            lp.topMargin = top;
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.RIGHT | Gravity.CENTER_VERTICAL);
             lp.rightMargin = dp(parent.getContext(), 4);
             return lp;
         }
         ViewGroup.MarginLayoutParams lp = new ViewGroup.MarginLayoutParams(width, height);
-        lp.topMargin = top;
         lp.rightMargin = dp(parent.getContext(), 4);
         return lp;
     }
@@ -326,7 +342,7 @@ public final class MaxBridge {
             if (!(root instanceof ViewGroup)) {
                 return;
             }
-            View button = ((ViewGroup) root).findViewWithTag(TAB_TAG);
+            View button = ((ViewGroup) root).findViewWithTag(BUTTON_TAG);
             if (!(button instanceof TextView)) {
                 return;
             }
@@ -334,10 +350,10 @@ public final class MaxBridge {
             text.setSelected(active);
             if (active) {
                 text.setTextColor(0xff3390ec);
-                text.setBackgroundColor(0x1a3390ec);
+                text.setBackground(makeButtonBackground(text.getContext(), true));
             } else {
                 text.setTextColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhiteBlackText", 0xff222222));
-                text.setBackgroundColor(Color.TRANSPARENT);
+                text.setBackground(makeButtonBackground(text.getContext(), false));
             }
         } catch (Throwable ignored) {
         }
@@ -377,14 +393,19 @@ public final class MaxBridge {
         int hPad = dp(context, 12);
         tab.setPadding(hPad, 0, hPad, 0);
         tab.setMinWidth(dp(context, 56));
+        tab.setBackground(makeButtonBackground(context, false));
         if (Build.VERSION.SDK_INT >= 21) {
-            TypedValue outValue = new TypedValue();
-            if (context.getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)) {
-                tab.setBackgroundResource(outValue.resourceId);
-            }
             tab.setStateListAnimator(null);
         }
         return tab;
+    }
+
+    private static GradientDrawable makeButtonBackground(Context context, boolean active) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.RECTANGLE);
+        drawable.setCornerRadius(dp(context, 18));
+        drawable.setColor(active ? 0x263390ec : Color.TRANSPARENT);
+        return drawable;
     }
 
     @SuppressLint("SetJavaScriptEnabled")
