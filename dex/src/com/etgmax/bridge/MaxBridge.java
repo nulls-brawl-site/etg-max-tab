@@ -4,7 +4,6 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.os.Build;
 import android.util.SparseIntArray;
 import android.view.Gravity;
@@ -19,7 +18,6 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.TextView;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -34,8 +32,14 @@ public final class MaxBridge {
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
     private static View activeFilterTabs;
+    private static Object activeDialogsActivity;
+    private static Object activeOriginalDelegate;
+    private static Class<?> activeDelegateType;
     private static int restoreTabId = Integer.MIN_VALUE;
     private static int restorePosition = -1;
+    private static boolean floatingStateSaved;
+    private static boolean previousFloatingHidden;
+    private static boolean previousFloatingForceVisible;
 
     private MaxBridge() {
     }
@@ -61,7 +65,7 @@ public final class MaxBridge {
                     + " filterTabsView=" + (filterTabs != null);
         }
         cleanupOldStandaloneButton(root, filterTabs);
-        return installFilterTab(activity, root, filterTabs);
+        return installFilterTab(target, activity, root, filterTabs);
     }
 
     private static Object resolveDialogsActivity(Object fragment) {
@@ -93,7 +97,7 @@ public final class MaxBridge {
         return null;
     }
 
-    private static String installFilterTab(Activity activity, View root, View filterTabs) {
+    private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         boolean unwrapped = unwrapFilterTabsDelegate(filterTabs);
         if (TAB_TAG.equals(filterTabs.getTag())) {
             filterTabs.setTag(null);
@@ -136,7 +140,7 @@ public final class MaxBridge {
             addTab.setAccessible(true);
             addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
             rebuildTabMappings(filterTabs, tabs);
-            boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
+            boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findMaxTabIndex(tabs);
@@ -215,7 +219,7 @@ public final class MaxBridge {
         return false;
     }
 
-    private static boolean wrapFilterTabsDelegate(Activity activity, View root, View filterTabs) {
+    private static boolean wrapFilterTabsDelegate(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         try {
             Field delegateField = findField(filterTabs.getClass(), "delegate");
             if (delegateField == null) {
@@ -230,7 +234,7 @@ public final class MaxBridge {
             Object proxy = Proxy.newProxyInstance(
                     delegateType.getClassLoader(),
                     new Class[]{delegateType},
-                    new MaxTabDelegateHandler(original, activity, root, filterTabs)
+                    new MaxTabDelegateHandler(original, delegateType, dialogsActivity, activity, root, filterTabs)
             );
             delegateField.set(filterTabs, proxy);
             return true;
@@ -262,12 +266,16 @@ public final class MaxBridge {
 
     private static final class MaxTabDelegateHandler implements InvocationHandler {
         private final Object original;
+        private final Class<?> delegateType;
+        private final Object dialogsActivity;
         private final Activity activity;
         private final View root;
         private final View filterTabs;
 
-        MaxTabDelegateHandler(Object original, Activity activity, View root, View filterTabs) {
+        MaxTabDelegateHandler(Object original, Class<?> delegateType, Object dialogsActivity, Activity activity, View root, View filterTabs) {
             this.original = original;
+            this.delegateType = delegateType;
+            this.dialogsActivity = dialogsActivity;
             this.activity = activity;
             this.root = root;
             this.filterTabs = filterTabs;
@@ -278,16 +286,16 @@ public final class MaxBridge {
             String name = method.getName();
             if ("didSelectTab".equals(name) && args != null && args.length > 0) {
                 if (isMaxTabView(args[0])) {
-                    rememberRestorePoint(filterTabs);
-                    showOverlay(activity, root, filterTabs);
+                    rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
+                    showOverlay(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
                 hideOverlay(root);
             }
             if (("onTabSelected".equals(name) || "onPageSelected".equals(name)) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
-                    rememberRestorePoint(filterTabs);
-                    showOverlay(activity, root, filterTabs);
+                    rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
+                    showOverlay(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
                 hideOverlay(root);
@@ -325,9 +333,12 @@ public final class MaxBridge {
         return -1;
     }
 
-    private static void rememberRestorePoint(View filterTabs) {
+    private static void rememberRestorePoint(View filterTabs, Object originalDelegate, Class<?> delegateType, Object dialogsActivity) {
         try {
             activeFilterTabs = filterTabs;
+            activeOriginalDelegate = originalDelegate;
+            activeDelegateType = delegateType;
+            activeDialogsActivity = dialogsActivity;
             int previousId = getIntField(filterTabs, "previousId", Integer.MIN_VALUE);
             int previousPos = getIntField(filterTabs, "previousPosition", -1);
             if (previousId == Integer.MIN_VALUE || previousId == MAX_TAB_ID || previousPos < 0) {
@@ -356,7 +367,11 @@ public final class MaxBridge {
 
     private static void restoreSelectionIfCurrentMax() {
         View filterTabs = activeFilterTabs;
+        Object originalDelegate = activeOriginalDelegate;
+        Class<?> delegateType = activeDelegateType;
         activeFilterTabs = null;
+        activeOriginalDelegate = null;
+        activeDelegateType = null;
         try {
             if (filterTabs == null || getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID) {
                 restoreTabId = Integer.MIN_VALUE;
@@ -392,11 +407,122 @@ public final class MaxBridge {
                 setBooleanField(filterTabs, "animatingIndicator", false);
                 filterTabs.setEnabled(true);
                 notifyTabsChanged(filterTabs);
+                Object tab = getTabAt(filterTabs, pos);
+                dispatchRestoreSelection(originalDelegate, delegateType, tab);
             }
         } catch (Throwable ignored) {
         } finally {
             restoreTabId = Integer.MIN_VALUE;
             restorePosition = -1;
+        }
+    }
+
+    private static Object getTabAt(View filterTabs, int position) {
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField == null) {
+                return null;
+            }
+            tabsField.setAccessible(true);
+            Object value = tabsField.get(filterTabs);
+            if (!(value instanceof ArrayList)) {
+                return null;
+            }
+            ArrayList tabs = (ArrayList) value;
+            return position >= 0 && position < tabs.size() ? tabs.get(position) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void dispatchRestoreSelection(Object originalDelegate, Class<?> delegateType, Object tab) {
+        if (originalDelegate == null || delegateType == null || tab == null) {
+            return;
+        }
+        try {
+            Method onPageSelected = delegateType.getMethod("onPageSelected", tab.getClass(), boolean.class);
+            onPageSelected.setAccessible(true);
+            onPageSelected.invoke(originalDelegate, tab, false);
+        } catch (Throwable ignored) {
+        }
+        try {
+            Method onTabSelected = delegateType.getMethod("onTabSelected", tab.getClass(), boolean.class, boolean.class);
+            onTabSelected.setAccessible(true);
+            onTabSelected.invoke(originalDelegate, tab, false, true);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void hideFloatingButtons(Object dialogsActivity) {
+        if (dialogsActivity == null) {
+            return;
+        }
+        try {
+            activeDialogsActivity = dialogsActivity;
+            if (!floatingStateSaved) {
+                previousFloatingHidden = getBooleanField(dialogsActivity, "floatingButtonHidden", false);
+                previousFloatingForceVisible = getBooleanField(dialogsActivity, "floatingForceVisible", false);
+                floatingStateSaved = true;
+            }
+            setBooleanField(dialogsActivity, "floatingForceVisible", false);
+            setBooleanField(dialogsActivity, "floatingButtonHidden", true);
+            invokeNoArgOrBoolean(dialogsActivity, "updateFloatingButtonVisibility", false);
+            setFieldViewVisibility(dialogsActivity, "floatingButton3", View.GONE);
+            setFieldViewVisibility(dialogsActivity, "floatingButtonStories", View.GONE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void restoreFloatingButtons() {
+        Object dialogsActivity = activeDialogsActivity;
+        activeDialogsActivity = null;
+        if (dialogsActivity == null || !floatingStateSaved) {
+            floatingStateSaved = false;
+            return;
+        }
+        try {
+            setBooleanField(dialogsActivity, "floatingButtonHidden", previousFloatingHidden);
+            setBooleanField(dialogsActivity, "floatingForceVisible", previousFloatingForceVisible);
+            invokeNoArgOrBoolean(dialogsActivity, "updateFloatingButtonVisibility", false);
+            if (!previousFloatingHidden) {
+                setFieldViewVisibility(dialogsActivity, "floatingButton3", View.VISIBLE);
+                setFieldViewVisibility(dialogsActivity, "floatingButtonStories", View.VISIBLE);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            floatingStateSaved = false;
+            previousFloatingHidden = false;
+            previousFloatingForceVisible = false;
+        }
+    }
+
+    private static void invokeNoArgOrBoolean(Object target, String name, boolean value) {
+        try {
+            Method method = findMethod(target.getClass(), name, boolean.class);
+            if (method != null) {
+                method.setAccessible(true);
+                method.invoke(target, value);
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Method method = findMethod(target.getClass(), name);
+            if (method != null) {
+                method.setAccessible(true);
+                method.invoke(target);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setFieldViewVisibility(Object target, String fieldName, int visibility) {
+        try {
+            View view = getFieldView(target, fieldName);
+            if (view != null) {
+                view.setVisibility(visibility);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -442,6 +568,7 @@ public final class MaxBridge {
                 ((ViewGroup) root).removeView(overlay);
             }
             restoreSelectionIfCurrentMax();
+            restoreFloatingButtons();
         }
     }
 
@@ -467,7 +594,7 @@ public final class MaxBridge {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private static void showOverlay(Activity activity, View root, View filterTabs) {
+    private static void showOverlay(Activity activity, View root, View filterTabs, Object dialogsActivity) {
         if (!(root instanceof ViewGroup)) {
             return;
         }
@@ -505,23 +632,6 @@ public final class MaxBridge {
                 Gravity.TOP
         ));
 
-        TextView close = new TextView(activity);
-        close.setText("X");
-        close.setGravity(Gravity.CENTER);
-        close.setTextSize(24);
-        close.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        close.setTextColor(Color.WHITE);
-        close.setBackgroundColor(0x66000000);
-        close.setOnClickListener(v -> hideOverlay(root));
-        FrameLayout.LayoutParams closeLp = new FrameLayout.LayoutParams(
-                dp(activity, 44),
-                dp(activity, 44),
-                Gravity.TOP | Gravity.RIGHT
-        );
-        closeLp.topMargin = dp(activity, 8);
-        closeLp.rightMargin = dp(activity, 8);
-        overlay.addView(close, closeLp);
-
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -543,6 +653,7 @@ public final class MaxBridge {
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        hideFloatingButtons(dialogsActivity);
         overlay.requestFocus();
         webView.loadUrl(URL);
     }
@@ -596,10 +707,11 @@ public final class MaxBridge {
                 + ":root{--etg-tg-bg:#fff;--etg-tg-surface:#fff;--etg-tg-panel:#f5f7fa;--etg-tg-text:#111;--etg-tg-muted:#707579;--etg-tg-line:#e7e7e7;--etg-tg-accent:#3390ec;--etg-tg-out:#effdde;--etg-tg-in:#fff;--etg-tg-chat-bg:#d8e6d1;--bubbles-background-bubble:#fff;--bubbles-background-bubble-gradient-step-1:#fff;--bubbles-background-bubble-gradient-step-2:#fff;--bubbles-background-bubble-gradient-step-3:#fff;--bubbles-text-body:#111;--bubbles-text-body-secondary:#707579;--bubbles-text-time:#707579;--bubbles-text-link:#2481cc;--bubbles-icon-read-status:#3390ec;}"
                 + "[data-bubbles-variant=outgoing]{--bubbles-background-bubble:#effdde!important;--bubbles-background-bubble-gradient-step-1:#effdde!important;--bubbles-background-bubble-gradient-step-2:#effdde!important;--bubbles-background-bubble-gradient-step-3:#effdde!important;--bubbles-text-body:#111!important;--bubbles-text-time:#4fae4e!important;--bubbles-icon-read-status:#4fae4e!important;}"
                 + "[data-bubbles-variant=incoming]{--bubbles-background-bubble:#fff!important;--bubbles-background-bubble-gradient-step-1:#fff!important;--bubbles-background-bubble-gradient-step-2:#fff!important;--bubbles-background-bubble-gradient-step-3:#fff!important;--bubbles-text-body:#111!important;--bubbles-text-time:#707579!important;}"
-                + "html,body,#app{height:100%!important;max-width:none!important;margin:0!important;background:var(--etg-tg-bg)!important;font-family:Roboto,Arial,sans-serif!important;color:var(--etg-tg-text)!important;letter-spacing:0!important;}"
-                + "body{overflow:hidden!important;place-items:stretch!important;min-width:0!important;}"
+                + "html,body,#app{height:100%!important;width:100%!important;max-width:none!important;margin:0!important;background:var(--etg-tg-bg)!important;font-family:Roboto,Arial,sans-serif!important;color:var(--etg-tg-text)!important;letter-spacing:0!important;box-sizing:border-box!important;}"
+                + "*,*:before,*:after{box-sizing:border-box!important;}"
+                + "body{overflow:hidden!important;min-width:0!important;}"
                 + "button,input,textarea,select{font-family:Roboto,Arial,sans-serif!important;letter-spacing:0!important;}"
-                + "[data-etg-max-root],.container{background:var(--etg-tg-bg)!important;}"
+                + "#app,main,[data-etg-max-root],.container{width:100%!important;max-width:none!important;min-width:0!important;background:var(--etg-tg-bg)!important;}"
                 + "[data-etg-max-list],[role=list],nav,aside,[class*=chatList],[class*=ChatList],[class*=conversationList],[class*=DialogList],.tabs-container{background:var(--etg-tg-surface)!important;border-right:1px solid var(--etg-tg-line)!important;box-shadow:none!important;}"
                 + "[data-etg-max-chat-row],[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog-item],[class*=conversation]{min-height:64px!important;border-radius:0!important;border-bottom:1px solid var(--etg-tg-line)!important;background:var(--etg-tg-surface)!important;color:var(--etg-tg-text)!important;transition:background .12s ease!important;}"
                 + "[data-etg-max-chat-row]:active,.chat-item:active,[data-etg-max-chat-row][aria-selected=true],.chat-item.selected{background:#eef6ff!important;}"
@@ -608,14 +720,15 @@ public final class MaxBridge {
                 + ".chat-item .preview,[data-etg-max-preview],.preview{font-size:14px!important;color:var(--etg-tg-muted)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}"
                 + ".chat-item .time,.time,[data-etg-max-time]{font-size:12px!important;color:var(--etg-tg-muted)!important;}"
                 + ".badge,[data-etg-max-badge]{background:var(--etg-tg-accent)!important;color:#fff!important;border-radius:999px!important;min-width:20px!important;height:20px!important;padding:0 6px!important;font-size:12px!important;line-height:20px!important;text-align:center!important;}"
-                + "[data-etg-max-messages],[class*=messages],[class*=Messages],[class*=chat-background],[class*=ChatWindow]{background:var(--etg-tg-chat-bg)!important;}"
+                + "[data-etg-max-messages],[class*=messages],[class*=Messages],[class*=chat-background],[class*=ChatWindow]{background:var(--etg-tg-chat-bg)!important;width:100%!important;max-width:none!important;min-width:0!important;}"
                 + "[data-etg-max-bubble],.message-bubble,[data-bubbles-variant]{max-width:min(78%,480px)!important;padding:7px 10px!important;margin:2px 8px!important;box-shadow:0 1px 1px rgba(0,0,0,.12)!important;color:var(--bubbles-text-body,var(--etg-tg-text))!important;}"
                 + "[data-etg-max-out=1],.message-row.is-me .message-bubble,[data-bubbles-variant=outgoing]{background:var(--etg-tg-out)!important;border-radius:12px 12px 4px 12px!important;margin-left:auto!important;}"
                 + "[data-etg-max-out=0],.message-row:not(.is-me):not(.is-system) .message-bubble,[data-bubbles-variant=incoming]{background:var(--etg-tg-in)!important;border-radius:12px 12px 12px 4px!important;margin-right:auto!important;}"
-                + ".message-row{display:flex!important;align-items:flex-start!important;margin:2px 0!important;}"
-                + ".message-row.is-me{align-items:flex-end!important;}"
+                + ".message-row,[data-etg-max-message-row]{display:flex!important;align-items:flex-start!important;width:100%!important;max-width:100%!important;margin:2px 0!important;padding:0 8px!important;}"
+                + ".message-row.is-me,[data-etg-max-message-row][data-etg-max-out-row=\"1\"]{justify-content:flex-end!important;align-items:flex-end!important;}"
                 + ".message-row.is-system .message-bubble{background:rgba(255,255,255,.55)!important;border-radius:999px!important;box-shadow:none!important;color:var(--etg-tg-muted)!important;}"
-                + "[data-etg-max-composer],form:has(textarea),form:has(input),[class*=composer],[class*=writebar],[class*=WriteBar]{background:var(--etg-tg-surface)!important;border-top:1px solid var(--etg-tg-line)!important;box-shadow:none!important;}"
+                + "[data-etg-max-composer],form:has(textarea),form:has(input),[class*=composer],[class*=writebar],[class*=WriteBar]{background:var(--etg-tg-surface)!important;border-top:1px solid var(--etg-tg-line)!important;box-shadow:none!important;width:100%!important;max-width:none!important;min-width:0!important;}"
+                + "[data-etg-max-composer] textarea,[data-etg-max-composer] input,[data-etg-max-composer] [contenteditable=true]{width:100%!important;max-width:100%!important;min-width:0!important;}"
                 + ".tab,.tab-wrapper,[role=tab]{border-radius:999px!important;color:var(--etg-tg-muted)!important;}"
                 + "[aria-selected=true].tab,[role=tab][aria-selected=true]{background:#e7f1ff!important;color:var(--etg-tg-accent)!important;}"
                 + "';"
@@ -623,7 +736,7 @@ public final class MaxBridge {
                 + "function hasAny(cls,arr){cls=(cls||'').toLowerCase();for(var i=0;i<arr.length;i++){if(cls.indexOf(arr[i])>-1)return true;}return false;}"
                 + "function mark(){try{addStyle();document.documentElement.dataset.etgMaxSkin='telegram';if(document.body)document.body.dataset.etgMax='1';"
                 + "var roots=document.querySelectorAll('#app,main,[class*=container]');for(var r=0;r<roots.length;r++){roots[r].setAttribute('data-etg-max-root','1');}"
-                + "var bubbles=document.querySelectorAll('[data-bubbles-variant],.message-bubble,[class*=bubble],[class*=Bubble]');for(var i=0;i<bubbles.length;i++){var b=bubbles[i];var v=(b.getAttribute('data-bubbles-variant')||'').toLowerCase();var c=b.className||'';b.setAttribute('data-etg-max-bubble','1');if(v.indexOf('out')>-1||hasAny(c,['outgoing','is-me','my-message']))b.setAttribute('data-etg-max-out','1');else if(v.indexOf('in')>-1||hasAny(c,['incoming']))b.setAttribute('data-etg-max-out','0');}"
+                + "var bubbles=document.querySelectorAll('[data-bubbles-variant],.message-bubble,[class*=bubble],[class*=Bubble]');for(var i=0;i<bubbles.length;i++){var b=bubbles[i];var v=(b.getAttribute('data-bubbles-variant')||'').toLowerCase();var c=b.className||'';b.setAttribute('data-etg-max-bubble','1');var out=(v.indexOf('out')>-1||hasAny(c,['outgoing','is-me','my-message']));if(out)b.setAttribute('data-etg-max-out','1');else if(v.indexOf('in')>-1||hasAny(c,['incoming']))b.setAttribute('data-etg-max-out','0');var row=b.closest('[class*=message],[class*=Message],[role=listitem]')||b.parentElement;if(row){row.setAttribute('data-etg-max-message-row','1');if(out)row.setAttribute('data-etg-max-out-row','1');}}"
                 + "var rows=document.querySelectorAll('[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog],[class*=Dialog],[class*=conversation],[class*=Conversation]');for(var j=0;j<rows.length;j++){var e=rows[j];var t=(e.textContent||'').trim();if(t.length>0&&t.length<600){e.setAttribute('data-etg-max-chat-row','1');}}"
                 + "var lists=document.querySelectorAll('[role=list],aside,nav,[class*=list],[class*=List]');for(var k=0;k<lists.length;k++){lists[k].setAttribute('data-etg-max-list','1');}"
                 + "var composers=document.querySelectorAll('form,footer,[class*=composer],[class*=writebar],[class*=WriteBar]');for(var m=0;m<composers.length;m++){var q=composers[m];if(q.querySelector('textarea,input,[contenteditable=true]'))q.setAttribute('data-etg-max-composer','1');}"
@@ -734,6 +847,18 @@ public final class MaxBridge {
         return null;
     }
 
+    private static Method findMethod(Class<?> cls, String name, Class<?>... parameterTypes) {
+        Class<?> c = cls;
+        while (c != null) {
+            try {
+                return c.getDeclaredMethod(name, parameterTypes);
+            } catch (NoSuchMethodException ignored) {
+                c = c.getSuperclass();
+            }
+        }
+        return null;
+    }
+
     private static int getIntField(Object target, String name, int fallback) {
         if (target == null) {
             return fallback;
@@ -745,6 +870,22 @@ public final class MaxBridge {
             }
             field.setAccessible(true);
             return field.getInt(target);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
+    private static boolean getBooleanField(Object target, String name, boolean fallback) {
+        if (target == null) {
+            return fallback;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return fallback;
+            }
+            field.setAccessible(true);
+            return field.getBoolean(target);
         } catch (Throwable ignored) {
             return fallback;
         }
