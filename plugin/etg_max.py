@@ -15,14 +15,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.2/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "43d6c79a125783d7a06b6444e90e75a3320bb8dd20060462f919bd76d8cc481d"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.3/etg-max-bridge.dex"
+DEFAULT_DEX_SHA256 = "d159d459f351f774e971a313dd4b5f8b0f4cb891b4f194ba677da44273b56c97"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
@@ -37,6 +37,7 @@ LEGACY_DEX_SHA256 = (
     "2e1093e814128343158f38a82d62bcd092e8ab97a7dcfd72024eec9ade9e39b7",
     "f1cd8e49eae4154a77ae4539d1660d10afb8a016e2cf0ad0a28c5bc062ab51b9",
     "51530b74756b8b48c6da01621f84533be6b036b8c143906ebb219d3d7df025be",
+    "43d6c79a125783d7a06b6444e90e75a3320bb8dd20060462f919bd76d8cc481d",
 )
 
 

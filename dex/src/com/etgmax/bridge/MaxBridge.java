@@ -32,14 +32,10 @@ public final class MaxBridge {
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
     private static View activeFilterTabs;
-    private static Object activeDialogsActivity;
     private static Object activeOriginalDelegate;
     private static Class<?> activeDelegateType;
     private static int restoreTabId = Integer.MIN_VALUE;
     private static int restorePosition = -1;
-    private static boolean floatingStateSaved;
-    private static boolean previousFloatingHidden;
-    private static boolean previousFloatingForceVisible;
 
     private MaxBridge() {
     }
@@ -290,6 +286,7 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return true;
                 }
+                sanitizeRegularSelectionAfterMax(filterTabs, args);
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
                 return result;
@@ -300,6 +297,7 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
+                sanitizeRegularSelectionAfterMax(filterTabs, args);
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
                 return result;
@@ -342,7 +340,6 @@ public final class MaxBridge {
             activeFilterTabs = filterTabs;
             activeOriginalDelegate = originalDelegate;
             activeDelegateType = delegateType;
-            activeDialogsActivity = dialogsActivity;
             int previousId = getIntField(filterTabs, "previousId", Integer.MIN_VALUE);
             int previousPos = getIntField(filterTabs, "previousPosition", -1);
             if (previousId == Integer.MIN_VALUE || previousId == MAX_TAB_ID || previousPos < 0) {
@@ -439,6 +436,61 @@ public final class MaxBridge {
         }
     }
 
+    private static void sanitizeRegularSelectionAfterMax(View filterTabs, Object[] args) {
+        try {
+            Object tab = null;
+            if (args != null && args.length > 0) {
+                if (isMaxTabView(args[0])) {
+                    return;
+                }
+                tab = isMaxTab(args[0]) ? null : args[0];
+            }
+            int targetId = getIntField(tab, "id", Integer.MIN_VALUE);
+            int targetPosition = findTabPositionById(filterTabs, targetId);
+            if (targetId == Integer.MIN_VALUE || targetId == MAX_TAB_ID || targetPosition < 0) {
+                return;
+            }
+            if (getIntField(filterTabs, "previousId", Integer.MIN_VALUE) == MAX_TAB_ID || activeFilterTabs == filterTabs) {
+                setIntField(filterTabs, "previousId", targetId);
+                setIntField(filterTabs, "previousPosition", targetPosition);
+                setIntField(filterTabs, "selectedTabId", targetId);
+                setIntField(filterTabs, "currentPosition", targetPosition);
+                setIntField(filterTabs, "oldAnimatedTab", targetPosition);
+                setBooleanField(filterTabs, "animatingIndicator", false);
+                filterTabs.setEnabled(true);
+                if (args != null && args.length > 1 && args[1] instanceof Boolean) {
+                    args[1] = Boolean.FALSE;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static int findTabPositionById(View filterTabs, int id) {
+        if (id == Integer.MIN_VALUE) {
+            return -1;
+        }
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField == null) {
+                return -1;
+            }
+            tabsField.setAccessible(true);
+            Object value = tabsField.get(filterTabs);
+            if (!(value instanceof ArrayList)) {
+                return -1;
+            }
+            ArrayList tabs = (ArrayList) value;
+            for (int i = 0; i < tabs.size(); i++) {
+                if (getIntField(tabs.get(i), "id", Integer.MIN_VALUE) == id) {
+                    return i;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
+    }
+
     private static void dispatchRestoreSelection(Object originalDelegate, Class<?> delegateType, Object tab) {
         if (originalDelegate == null || delegateType == null || tab == null) {
             return;
@@ -453,79 +505,6 @@ public final class MaxBridge {
             Method onTabSelected = delegateType.getMethod("onTabSelected", tab.getClass(), boolean.class, boolean.class);
             onTabSelected.setAccessible(true);
             onTabSelected.invoke(originalDelegate, tab, false, true);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static void hideFloatingButtons(Object dialogsActivity) {
-        if (dialogsActivity == null) {
-            return;
-        }
-        try {
-            activeDialogsActivity = dialogsActivity;
-            if (!floatingStateSaved) {
-                previousFloatingHidden = getBooleanField(dialogsActivity, "floatingButtonHidden", false);
-                previousFloatingForceVisible = getBooleanField(dialogsActivity, "floatingForceVisible", false);
-                floatingStateSaved = true;
-            }
-            setBooleanField(dialogsActivity, "floatingForceVisible", false);
-            setBooleanField(dialogsActivity, "floatingButtonHidden", true);
-            invokeNoArgOrBoolean(dialogsActivity, "updateFloatingButtonVisibility", false);
-            setFieldViewVisibility(dialogsActivity, "floatingButton3", View.GONE);
-            setFieldViewVisibility(dialogsActivity, "floatingButtonStories", View.GONE);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static void restoreFloatingButtons() {
-        Object dialogsActivity = activeDialogsActivity;
-        activeDialogsActivity = null;
-        if (dialogsActivity == null || !floatingStateSaved) {
-            floatingStateSaved = false;
-            return;
-        }
-        try {
-            setBooleanField(dialogsActivity, "floatingButtonHidden", previousFloatingHidden);
-            setBooleanField(dialogsActivity, "floatingForceVisible", previousFloatingForceVisible);
-            invokeNoArgOrBoolean(dialogsActivity, "updateFloatingButtonVisibility", false);
-            if (!previousFloatingHidden) {
-                setFieldViewVisibility(dialogsActivity, "floatingButton3", View.VISIBLE);
-                setFieldViewVisibility(dialogsActivity, "floatingButtonStories", View.VISIBLE);
-            }
-        } catch (Throwable ignored) {
-        } finally {
-            floatingStateSaved = false;
-            previousFloatingHidden = false;
-            previousFloatingForceVisible = false;
-        }
-    }
-
-    private static void invokeNoArgOrBoolean(Object target, String name, boolean value) {
-        try {
-            Method method = findMethod(target.getClass(), name, boolean.class);
-            if (method != null) {
-                method.setAccessible(true);
-                method.invoke(target, value);
-                return;
-            }
-        } catch (Throwable ignored) {
-        }
-        try {
-            Method method = findMethod(target.getClass(), name);
-            if (method != null) {
-                method.setAccessible(true);
-                method.invoke(target);
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static void setFieldViewVisibility(Object target, String fieldName, int visibility) {
-        try {
-            View view = getFieldView(target, fieldName);
-            if (view != null) {
-                view.setVisibility(visibility);
-            }
         } catch (Throwable ignored) {
         }
     }
@@ -568,11 +547,10 @@ public final class MaxBridge {
         if (root instanceof ViewGroup) {
             View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
             if (overlay != null) {
-                destroyWebViews(overlay);
                 ((ViewGroup) root).removeView(overlay);
+                destroyWebViewsLater(root, overlay);
             }
             restoreSelectionIfCurrentMax();
-            restoreFloatingButtons();
         }
     }
 
@@ -580,15 +558,22 @@ public final class MaxBridge {
         if (root instanceof ViewGroup) {
             View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
             if (overlay != null) {
-                destroyWebViews(overlay);
                 ((ViewGroup) root).removeView(overlay);
+                destroyWebViewsLater(root, overlay);
             }
             activeFilterTabs = null;
             activeOriginalDelegate = null;
             activeDelegateType = null;
             restoreTabId = Integer.MIN_VALUE;
             restorePosition = -1;
-            restoreFloatingButtons();
+        }
+    }
+
+    private static void destroyWebViewsLater(View host, View view) {
+        try {
+            host.post(() -> destroyWebViews(view));
+        } catch (Throwable ignored) {
+            destroyWebViews(view);
         }
     }
 
@@ -621,8 +606,8 @@ public final class MaxBridge {
         ViewGroup parent = (ViewGroup) root;
         View old = parent.findViewWithTag(OVERLAY_TAG);
         if (old != null) {
-            destroyWebViews(old);
             parent.removeView(old);
+            destroyWebViewsLater(parent, old);
         }
 
         FrameLayout overlay = new FrameLayout(activity);
@@ -664,7 +649,6 @@ public final class MaxBridge {
 
         int top = estimateTopMargin(parent, filterTabs);
         parent.addView(overlay, makeOverlayLayoutParams(parent, top));
-        hideFloatingButtons(dialogsActivity);
         overlay.requestFocus();
         webView.loadUrl(URL);
     }
@@ -805,18 +789,6 @@ public final class MaxBridge {
         return null;
     }
 
-    private static Method findMethod(Class<?> cls, String name, Class<?>... parameterTypes) {
-        Class<?> c = cls;
-        while (c != null) {
-            try {
-                return c.getDeclaredMethod(name, parameterTypes);
-            } catch (NoSuchMethodException ignored) {
-                c = c.getSuperclass();
-            }
-        }
-        return null;
-    }
-
     private static int getIntField(Object target, String name, int fallback) {
         if (target == null) {
             return fallback;
@@ -828,22 +800,6 @@ public final class MaxBridge {
             }
             field.setAccessible(true);
             return field.getInt(target);
-        } catch (Throwable ignored) {
-            return fallback;
-        }
-    }
-
-    private static boolean getBooleanField(Object target, String name, boolean fallback) {
-        if (target == null) {
-            return fallback;
-        }
-        try {
-            Field field = findField(target.getClass(), name);
-            if (field == null) {
-                return fallback;
-            }
-            field.setAccessible(true);
-            return field.getBoolean(target);
         } catch (Throwable ignored) {
             return fallback;
         }
