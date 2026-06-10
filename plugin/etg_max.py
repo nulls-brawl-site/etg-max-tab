@@ -7,7 +7,6 @@ from android_utils import copy_to_clipboard
 from base_plugin import BasePlugin, MethodHook
 from client_utils import PLUGINS_QUEUE, run_on_queue
 from file_utils import ensure_dir_exists, get_plugins_dir
-from hook_utils import find_class
 from java import jclass
 from java.lang import ClassLoader
 from ui.settings import Header, Input, Switch, Text
@@ -16,7 +15,7 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
@@ -97,8 +96,8 @@ class MaxTabPlugin(BasePlugin):
         ]
 
     def _install_hooks(self):
-        DialogsActivity = find_class("org.telegram.ui.DialogsActivity")
-        Context = find_class("android.content.Context")
+        DialogsActivity = self._class_ref("org.telegram.ui.DialogsActivity")
+        Context = self._class_ref("android.content.Context")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
             self._log("MAX Tab: DialogsActivity/Context not found")
@@ -146,6 +145,7 @@ class MaxTabPlugin(BasePlugin):
         expected_sha = (self.get_setting("dex_sha256", DEFAULT_DEX_SHA256) or "").strip().lower()
         if os.path.exists(dex_path) and os.path.getsize(dex_path) > 1024:
             if not expected_sha or self._sha256(dex_path) == expected_sha:
+                self._make_read_only(dex_path)
                 self._log(f"MAX Tab: using cached dex at {dex_path}")
                 return dex_path
         if not self.get_setting("auto_download", True):
@@ -154,6 +154,11 @@ class MaxTabPlugin(BasePlugin):
         tmp_path = dex_path + ".tmp"
         try:
             self._log(f"MAX Tab: downloading dex to {dex_path}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
             with urllib.request.urlopen(url, timeout=25) as response:
                 data = response.read()
             if len(data) < 1024:
@@ -165,7 +170,9 @@ class MaxTabPlugin(BasePlugin):
                 return None
             with open(tmp_path, "wb") as f:
                 f.write(data)
+            self._make_read_only(tmp_path)
             os.replace(tmp_path, dex_path)
+            self._make_read_only(dex_path)
             self._log(f"MAX Tab: dex downloaded sha256={got_sha}")
             return dex_path
         except Exception as e:
@@ -215,6 +222,29 @@ class MaxTabPlugin(BasePlugin):
 
     def _dex_dir(self):
         return os.path.join(get_plugins_dir(), __id__)
+
+    def _class_ref(self, name):
+        try:
+            cls = jclass(name)
+            if hasattr(cls, "getDeclaredMethod"):
+                return cls
+            if hasattr(cls, "class_"):
+                return cls.class_
+        except Exception:
+            return None
+        return None
+
+    def _make_read_only(self, path):
+        try:
+            os.chmod(path, 0o444)
+            return
+        except Exception:
+            pass
+        try:
+            File = jclass("java.io.File")
+            File(path).setReadOnly()
+        except Exception as e:
+            self._log(f"MAX Tab: failed to make dex read-only: {e}")
 
     def _log(self, message):
         try:
