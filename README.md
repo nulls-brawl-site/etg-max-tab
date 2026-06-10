@@ -35,3 +35,7 @@ After publishing, install `plugin/etg_max.py` into:
 ## Notes
 
 `web.max.ru` is a Svelte SPA. Public HTML only exposes the app shell; chat DOM is created after login and can change. The bridge therefore injects a resilient CSS/JS layer with broad selectors and a `MutationObserver` instead of depending on one fixed class map.
+
+The Telegram-like skin is based on the current public `web.max.ru` CSS tokens, the `maxplus` open-source chat component names, and a local-only WebSocket change probe inspired by public MAX WebView monitor projects. It does not export tokens, packets, chats, or messages.
+
+See `docs/research.md` for source links and exact implementation assumptions.

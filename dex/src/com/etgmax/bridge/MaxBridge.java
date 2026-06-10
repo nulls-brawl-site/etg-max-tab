@@ -2,15 +2,14 @@ package com.etgmax.bridge;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
-import android.os.Bundle;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.inputmethod.InputMethodManager;
-import android.content.Context;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -25,7 +24,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 public final class MaxBridge {
-    private static final int MAX_TAB_ID = 0x4d415858;
     private static final String TAB_TAG = "etg_max_tab";
     private static final String OVERLAY_TAG = "etg_max_overlay";
     private static final String URL = "https://web.max.ru/";
@@ -47,9 +45,9 @@ public final class MaxBridge {
         if (tabsContainer == null || tabsContainer.findViewWithTag(TAB_TAG) != null) {
             return;
         }
-        TextView tab = createTab(activity, filterTabs);
+        TextView tab = createTab(activity);
         tab.setTag(TAB_TAG);
-        tab.setOnClickListener(v -> showOverlay(dialogsActivity, activity, root, filterTabs));
+        tab.setOnClickListener(v -> showOverlay(activity, root, filterTabs));
         tabsContainer.addView(tab, new LinearLayout.LayoutParams(dp(activity, 64), ViewGroup.LayoutParams.MATCH_PARENT));
         tabsContainer.post(() -> {
             try {
@@ -72,7 +70,7 @@ public final class MaxBridge {
         }
     }
 
-    private static TextView createTab(Context context, View filterTabs) {
+    private static TextView createTab(Context context) {
         TextView tab = new TextView(context);
         tab.setText("MAX");
         tab.setGravity(Gravity.CENTER);
@@ -86,14 +84,17 @@ public final class MaxBridge {
         tab.setPadding(hPad, 0, hPad, 0);
         tab.setMinWidth(dp(context, 56));
         if (Build.VERSION.SDK_INT >= 21) {
-            tab.setBackground(filterTabs.getBackground());
+            TypedValue outValue = new TypedValue();
+            if (context.getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)) {
+                tab.setBackgroundResource(outValue.resourceId);
+            }
             tab.setStateListAnimator(null);
         }
         return tab;
     }
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-    private static void showOverlay(Object dialogsActivity, Activity activity, View root, View filterTabs) {
+    @SuppressLint("SetJavaScriptEnabled")
+    private static void showOverlay(Activity activity, View root, View filterTabs) {
         if (!(root instanceof ViewGroup)) {
             return;
         }
@@ -107,19 +108,19 @@ public final class MaxBridge {
         overlay.setTag(OVERLAY_TAG);
         overlay.setBackgroundColor(resolveColor("org.telegram.ui.ActionBar.Theme", "key_windowBackgroundWhite", Color.WHITE));
 
+        WebView webView = new WebView(activity);
+        configureWebView(webView);
+        overlay.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
         ProgressBar progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
         overlay.addView(progress, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(activity, 2),
                 Gravity.TOP
-        ));
-
-        WebView webView = new WebView(activity);
-        configureWebView(webView);
-        overlay.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
         webView.setWebChromeClient(new WebChromeClient() {
@@ -131,19 +132,44 @@ public final class MaxBridge {
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                injectTelegramSkin(view);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 injectTelegramSkin(view);
             }
         });
 
         int top = estimateTopMargin(parent, filterTabs);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+        parent.addView(overlay, makeOverlayLayoutParams(parent, top));
+        webView.loadUrl(URL);
+    }
+
+    private static ViewGroup.LayoutParams makeOverlayLayoutParams(ViewGroup parent, int topMargin) {
+        if (parent instanceof FrameLayout) {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            );
+            lp.topMargin = topMargin;
+            return lp;
+        }
+        if (parent instanceof LinearLayout) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            );
+            lp.topMargin = topMargin;
+            return lp;
+        }
+        ViewGroup.MarginLayoutParams lp = new ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         );
-        lp.topMargin = top;
-        parent.addView(overlay, lp);
-        webView.loadUrl(URL);
+        lp.topMargin = topMargin;
+        return lp;
     }
 
     private static void configureWebView(WebView webView) {
@@ -165,22 +191,47 @@ public final class MaxBridge {
 
     private static void injectTelegramSkin(WebView webView) {
         String js = "(function(){"
-                + "const id='etg-max-telegram-skin';"
-                + "if(!document.getElementById(id)){"
-                + "const s=document.createElement('style');s.id=id;s.textContent=`"
-                + ":root{--tg-bg:#fff;--tg-text:#111;--tg-muted:#707579;--tg-line:#e7e7e7;--tg-accent:#3390ec;--tg-out:#effdde;--tg-in:#fff;}"
-                + "html,body,#app{height:100%!important;max-width:none!important;margin:0!important;background:var(--tg-bg)!important;font-family:Roboto,Arial,sans-serif!important;}"
-                + "body{overflow:hidden!important;color:var(--tg-text)!important;}"
-                + "button,input,textarea{font-family:Roboto,Arial,sans-serif!important;}"
-                + "[role=list],nav,aside,[class*=chatList],[class*=conversationList],[class*=dialogs],[class*=DialogList]{background:var(--tg-bg)!important;border-right:1px solid var(--tg-line)!important;}"
-                + "[role=listitem],[class*=chatItem],[class*=dialog],[class*=conversation]{min-height:64px!important;border-radius:0!important;border-bottom:1px solid var(--tg-line)!important;background:var(--tg-bg)!important;}"
-                + "[class*=message][class*=out], [data-out=true]{background:var(--tg-out)!important;border-radius:12px 12px 4px 12px!important;}"
-                + "[class*=message][class*=in], [data-out=false]{background:var(--tg-in)!important;border-radius:12px 12px 12px 4px!important;box-shadow:0 1px 1px rgba(0,0,0,.08)!important;}"
-                + "[class*=composer],form:has(textarea),form:has(input){background:var(--tg-bg)!important;border-top:1px solid var(--tg-line)!important;}"
-                + "`;document.head.appendChild(s);}"
-                + "function mark(){document.body.dataset.etgMax='1';"
-                + "document.querySelectorAll('a,button,[role=button]').forEach(e=>{if(!e.dataset.etgFast){e.dataset.etgFast='1';e.style.webkitTapHighlightColor='transparent';}});}"
-                + "mark();new MutationObserver(mark).observe(document.documentElement,{childList:true,subtree:true});"
+                + "if(window.__etgMaxSkinBooting)return;window.__etgMaxSkinBooting=1;"
+                + "var CSS='"
+                + ":root{--etg-tg-bg:#fff;--etg-tg-surface:#fff;--etg-tg-panel:#f5f7fa;--etg-tg-text:#111;--etg-tg-muted:#707579;--etg-tg-line:#e7e7e7;--etg-tg-accent:#3390ec;--etg-tg-out:#effdde;--etg-tg-in:#fff;--etg-tg-chat-bg:#d8e6d1;--bubbles-background-bubble:#fff;--bubbles-background-bubble-gradient-step-1:#fff;--bubbles-background-bubble-gradient-step-2:#fff;--bubbles-background-bubble-gradient-step-3:#fff;--bubbles-text-body:#111;--bubbles-text-body-secondary:#707579;--bubbles-text-time:#707579;--bubbles-text-link:#2481cc;--bubbles-icon-read-status:#3390ec;}"
+                + "[data-bubbles-variant=outgoing]{--bubbles-background-bubble:#effdde!important;--bubbles-background-bubble-gradient-step-1:#effdde!important;--bubbles-background-bubble-gradient-step-2:#effdde!important;--bubbles-background-bubble-gradient-step-3:#effdde!important;--bubbles-text-body:#111!important;--bubbles-text-time:#4fae4e!important;--bubbles-icon-read-status:#4fae4e!important;}"
+                + "[data-bubbles-variant=incoming]{--bubbles-background-bubble:#fff!important;--bubbles-background-bubble-gradient-step-1:#fff!important;--bubbles-background-bubble-gradient-step-2:#fff!important;--bubbles-background-bubble-gradient-step-3:#fff!important;--bubbles-text-body:#111!important;--bubbles-text-time:#707579!important;}"
+                + "html,body,#app{height:100%!important;max-width:none!important;margin:0!important;background:var(--etg-tg-bg)!important;font-family:Roboto,Arial,sans-serif!important;color:var(--etg-tg-text)!important;letter-spacing:0!important;}"
+                + "body{overflow:hidden!important;place-items:stretch!important;min-width:0!important;}"
+                + "button,input,textarea,select{font-family:Roboto,Arial,sans-serif!important;letter-spacing:0!important;}"
+                + "[data-etg-max-root],.container{background:var(--etg-tg-bg)!important;}"
+                + "[data-etg-max-list],[role=list],nav,aside,[class*=chatList],[class*=ChatList],[class*=conversationList],[class*=DialogList],.tabs-container{background:var(--etg-tg-surface)!important;border-right:1px solid var(--etg-tg-line)!important;box-shadow:none!important;}"
+                + "[data-etg-max-chat-row],[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog-item],[class*=conversation]{min-height:64px!important;border-radius:0!important;border-bottom:1px solid var(--etg-tg-line)!important;background:var(--etg-tg-surface)!important;color:var(--etg-tg-text)!important;transition:background .12s ease!important;}"
+                + "[data-etg-max-chat-row]:active,.chat-item:active,[data-etg-max-chat-row][aria-selected=true],.chat-item.selected{background:#eef6ff!important;}"
+                + ".chat-item{gap:12px!important;padding:8px 10px!important;}"
+                + ".chat-item .name,[data-etg-max-title]{font-size:16px!important;font-weight:500!important;color:var(--etg-tg-text)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}"
+                + ".chat-item .preview,[data-etg-max-preview],.preview{font-size:14px!important;color:var(--etg-tg-muted)!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}"
+                + ".chat-item .time,.time,[data-etg-max-time]{font-size:12px!important;color:var(--etg-tg-muted)!important;}"
+                + ".badge,[data-etg-max-badge]{background:var(--etg-tg-accent)!important;color:#fff!important;border-radius:999px!important;min-width:20px!important;height:20px!important;padding:0 6px!important;font-size:12px!important;line-height:20px!important;text-align:center!important;}"
+                + "[data-etg-max-messages],[class*=messages],[class*=Messages],[class*=chat-background],[class*=ChatWindow]{background:var(--etg-tg-chat-bg)!important;}"
+                + "[data-etg-max-bubble],.message-bubble,[data-bubbles-variant]{max-width:min(78%,480px)!important;padding:7px 10px!important;margin:2px 8px!important;box-shadow:0 1px 1px rgba(0,0,0,.12)!important;color:var(--bubbles-text-body,var(--etg-tg-text))!important;}"
+                + "[data-etg-max-out=1],.message-row.is-me .message-bubble,[data-bubbles-variant=outgoing]{background:var(--etg-tg-out)!important;border-radius:12px 12px 4px 12px!important;margin-left:auto!important;}"
+                + "[data-etg-max-out=0],.message-row:not(.is-me):not(.is-system) .message-bubble,[data-bubbles-variant=incoming]{background:var(--etg-tg-in)!important;border-radius:12px 12px 12px 4px!important;margin-right:auto!important;}"
+                + ".message-row{display:flex!important;align-items:flex-start!important;margin:2px 0!important;}"
+                + ".message-row.is-me{align-items:flex-end!important;}"
+                + ".message-row.is-system .message-bubble{background:rgba(255,255,255,.55)!important;border-radius:999px!important;box-shadow:none!important;color:var(--etg-tg-muted)!important;}"
+                + "[data-etg-max-composer],form:has(textarea),form:has(input),[class*=composer],[class*=writebar],[class*=WriteBar]{background:var(--etg-tg-surface)!important;border-top:1px solid var(--etg-tg-line)!important;box-shadow:none!important;}"
+                + ".tab,.tab-wrapper,[role=tab]{border-radius:999px!important;color:var(--etg-tg-muted)!important;}"
+                + "[aria-selected=true].tab,[role=tab][aria-selected=true]{background:#e7f1ff!important;color:var(--etg-tg-accent)!important;}"
+                + "';"
+                + "function addStyle(){var s=document.getElementById('etg-max-telegram-skin');if(!s){s=document.createElement('style');s.id='etg-max-telegram-skin';document.head.appendChild(s);}if(s.textContent!==CSS)s.textContent=CSS;}"
+                + "function hasAny(cls,arr){cls=(cls||'').toLowerCase();for(var i=0;i<arr.length;i++){if(cls.indexOf(arr[i])>-1)return true;}return false;}"
+                + "function mark(){try{addStyle();document.documentElement.dataset.etgMaxSkin='telegram';if(document.body)document.body.dataset.etgMax='1';"
+                + "var roots=document.querySelectorAll('#app,main,[class*=container]');for(var r=0;r<roots.length;r++){roots[r].setAttribute('data-etg-max-root','1');}"
+                + "var bubbles=document.querySelectorAll('[data-bubbles-variant],.message-bubble,[class*=bubble],[class*=Bubble]');for(var i=0;i<bubbles.length;i++){var b=bubbles[i];var v=(b.getAttribute('data-bubbles-variant')||'').toLowerCase();var c=b.className||'';b.setAttribute('data-etg-max-bubble','1');if(v.indexOf('out')>-1||hasAny(c,['outgoing','is-me','my-message']))b.setAttribute('data-etg-max-out','1');else if(v.indexOf('in')>-1||hasAny(c,['incoming']))b.setAttribute('data-etg-max-out','0');}"
+                + "var rows=document.querySelectorAll('[role=listitem],.chat-item,[class*=chatItem],[class*=ChatItem],[class*=dialog],[class*=Dialog],[class*=conversation],[class*=Conversation]');for(var j=0;j<rows.length;j++){var e=rows[j];var t=(e.textContent||'').trim();if(t.length>0&&t.length<600){e.setAttribute('data-etg-max-chat-row','1');}}"
+                + "var lists=document.querySelectorAll('[role=list],aside,nav,[class*=list],[class*=List]');for(var k=0;k<lists.length;k++){lists[k].setAttribute('data-etg-max-list','1');}"
+                + "var composers=document.querySelectorAll('form,footer,[class*=composer],[class*=writebar],[class*=WriteBar]');for(var m=0;m<composers.length;m++){var q=composers[m];if(q.querySelector('textarea,input,[contenteditable=true]'))q.setAttribute('data-etg-max-composer','1');}"
+                + "var links=document.querySelectorAll('a,button,[role=button]');for(var n=0;n<links.length;n++){links[n].style.webkitTapHighlightColor='transparent';}"
+                + "}catch(e){window.__etgMaxSkinError=String(e);}}"
+                + "function installWsProbe(){if(window.__etgMaxWsProbe||!window.WebSocket)return;window.__etgMaxWsProbe=1;var NativeWS=window.WebSocket;function WrappedWS(url,protocols){var ws=protocols!==undefined?new NativeWS(url,protocols):new NativeWS(url);try{ws.addEventListener('message',function(ev){window.__etgMaxLastPacketAt=Date.now();setTimeout(mark,0);});}catch(e){}return ws;}WrappedWS.prototype=NativeWS.prototype;WrappedWS.CONNECTING=NativeWS.CONNECTING;WrappedWS.OPEN=NativeWS.OPEN;WrappedWS.CLOSING=NativeWS.CLOSING;WrappedWS.CLOSED=NativeWS.CLOSED;window.WebSocket=WrappedWS;}"
+                + "mark();installWsProbe();if(!window.__etgMaxObserver){window.__etgMaxObserver=new MutationObserver(function(){clearTimeout(window.__etgMaxMarkTimer);window.__etgMaxMarkTimer=setTimeout(mark,60);});window.__etgMaxObserver.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','data-bubbles-variant','aria-selected']});}"
+                + "window.__etgMaxSkinBooting=0;"
                 + "})();";
         if (Build.VERSION.SDK_INT >= 19) {
             webView.evaluateJavascript(js, null);
@@ -191,13 +242,11 @@ public final class MaxBridge {
 
     private static int estimateTopMargin(ViewGroup root, View filterTabs) {
         try {
-            int rootTop = root.getTop();
-            int bottom = filterTabs.getBottom();
-            if (filterTabs.getParent() instanceof View) {
-                View parent = (View) filterTabs.getParent();
-                bottom += parent.getTop();
-            }
-            return Math.max(bottom - rootTop, dp(root.getContext(), 48));
+            int[] rootPos = new int[2];
+            int[] tabsPos = new int[2];
+            root.getLocationOnScreen(rootPos);
+            filterTabs.getLocationOnScreen(tabsPos);
+            return Math.max((tabsPos[1] - rootPos[1]) + filterTabs.getHeight(), dp(root.getContext(), 48));
         } catch (Throwable ignored) {
             return dp(root.getContext(), 48);
         }
