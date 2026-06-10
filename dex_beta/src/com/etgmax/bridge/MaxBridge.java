@@ -6,6 +6,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
@@ -543,6 +544,7 @@ public final class MaxBridge {
 
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         if (isMaxTabInstalledAtEnd(filterTabs) && isWrappedMaxDelegate(filterTabs)) {
+            hardenMaxTabVisualState(root, filterTabs, activity);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
@@ -600,6 +602,7 @@ public final class MaxBridge {
             addTab.setAccessible(true);
             addTab.invoke(filterTabs, MAX_TAB_ID, MAX_TAB_ID, "MAX", null, null, false, false, false);
             rebuildTabMappings(filterTabs, tabs);
+            hardenMaxTabVisualState(root, filterTabs, activity);
             boolean wrapped = wrapFilterTabsDelegate(dialogsActivity, activity, root, filterTabs);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
@@ -613,6 +616,7 @@ public final class MaxBridge {
                 activeDialogsActivity = dialogsActivity;
             }
             notifyTabsChanged(filterTabs);
+            hardenMaxTabVisualState(root, filterTabs, activity);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
                     + " tabs=" + tabs.size()
                     + " wrapped=" + wrapped
@@ -785,6 +789,98 @@ public final class MaxBridge {
         try {
             filterTabs.requestLayout();
             filterTabs.invalidate();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void hardenMaxTabVisualState(View root, View filterTabs, Activity activity) {
+        ensureFilterTabsLockDrawable(filterTabs, activity);
+        sanitizeMaxTabState(filterTabs);
+        if (root != null) {
+            root.post(() -> {
+                ensureFilterTabsLockDrawable(filterTabs, activity);
+                sanitizeMaxTabState(filterTabs);
+            });
+            root.postDelayed(() -> {
+                ensureFilterTabsLockDrawable(filterTabs, activity);
+                sanitizeMaxTabState(filterTabs);
+            }, 80);
+            root.postDelayed(() -> {
+                ensureFilterTabsLockDrawable(filterTabs, activity);
+                sanitizeMaxTabState(filterTabs);
+            }, 240);
+        }
+    }
+
+    private static void ensureFilterTabsLockDrawable(View filterTabs, Activity activity) {
+        if (filterTabs == null) {
+            return;
+        }
+        try {
+            Object current = getFieldObject(filterTabs, "lockDrawable");
+            if (current instanceof Drawable) {
+                return;
+            }
+            Drawable drawable = null;
+            Context context = activity != null ? activity : filterTabs.getContext();
+            if (context != null) {
+                try {
+                    Class<?> drawables = Class.forName("org.telegram.messenger.R$drawable");
+                    Field field = findField(drawables, "other_lockedfolders");
+                    if (field != null) {
+                        field.setAccessible(true);
+                        int resId = field.getInt(null);
+                        if (resId != 0) {
+                            drawable = Build.VERSION.SDK_INT >= 21
+                                    ? context.getDrawable(resId)
+                                    : context.getResources().getDrawable(resId);
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            if (drawable == null) {
+                drawable = new ColorDrawable(Color.TRANSPARENT);
+            }
+            setObjectField(filterTabs, "lockDrawable", drawable);
+            setIntField(filterTabs, "lockDrawableColor", Integer.MIN_VALUE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void sanitizeMaxTabState(View filterTabs) {
+        if (filterTabs == null) {
+            return;
+        }
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField != null) {
+                tabsField.setAccessible(true);
+                Object value = tabsField.get(filterTabs);
+                if (value instanceof ArrayList) {
+                    ArrayList tabs = (ArrayList) value;
+                    for (int i = 0; i < tabs.size(); i++) {
+                        Object tab = tabs.get(i);
+                        if (isMaxTab(tab)) {
+                            setBooleanField(tab, "isLocked", false);
+                        }
+                    }
+                }
+            }
+            View listView = getFieldView(filterTabs, "listView");
+            if (listView instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) listView;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    View child = group.getChildAt(i);
+                    Object tab = getFieldObject(child, "currentTab");
+                    if (isMaxTab(tab)) {
+                        setBooleanField(tab, "isLocked", false);
+                        setFloatField(child, "progressToLocked", 0f);
+                        setFloatField(child, "locIconXOffset", 0f);
+                        child.invalidate();
+                    }
+                }
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -3530,6 +3626,20 @@ public final class MaxBridge {
             if (field != null) {
                 field.setAccessible(true);
                 field.setFloat(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setObjectField(Object target, String name, Object value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field != null) {
+                field.setAccessible(true);
+                field.set(target, value);
             }
         } catch (Throwable ignored) {
         }
