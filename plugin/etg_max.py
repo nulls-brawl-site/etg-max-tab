@@ -1,5 +1,6 @@
 import hashlib
 import os
+import urllib.parse
 import urllib.request
 from typing import Any, List
 
@@ -15,14 +16,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.5.7"
+__version__ = "1.5.8"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.7/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "6a89b637e1a33e0b854ef8bfe0c654b0edad9725e74593afa39bff9423fcddd7"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.8/etg-max-bridge.dex"
+DEFAULT_DEX_SHA256 = "37e041548d6d0e19037bd3546c54b5188f27814f47241f4831befb7ff4c37038"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
@@ -42,6 +43,7 @@ LEGACY_DEX_SHA256 = (
     "6e74b38205c783aabc366a9d274aec2b76694e867cefbd452f2c6c8dc8e1631c",
     "fd8a333c215365586100433e1162f04120f26cfb4dbe39f75cd112ad0f0e6003",
     "b45a54a6317708f1781e7a3f5b0976477883516213d48e153c29884f9052c775",
+    "6a89b637e1a33e0b854ef8bfe0c654b0edad9725e74593afa39bff9423fcddd7",
 )
 
 
@@ -69,12 +71,21 @@ class _BeforeDestroy(MethodHook):
         self.plugin.hide_tab(param.thisObject)
 
 
+class _BeforeOpenUrl(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        self.plugin.handle_browser_open(param)
+
+
 class MaxTabPlugin(BasePlugin):
     def on_plugin_load(self):
         self._log_lines = []
         self._bridge = None
         self._bridge_install = None
         self._bridge_hide = None
+        self._bridge_open_max_url = None
         self._bridge_ready = False
         self._pending_fragments = []
         self._hooks = []
@@ -120,6 +131,7 @@ class MaxTabPlugin(BasePlugin):
     def _install_hooks(self):
         DialogsActivity = self._class_ref("org.telegram.ui.DialogsActivity")
         MainTabsActivity = self._class_ref("org.telegram.ui.MainTabsActivity")
+        Browser = self._class_ref("org.telegram.messenger.browser.Browser")
         Context = self._class_ref("android.content.Context")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
@@ -153,7 +165,12 @@ class MaxTabPlugin(BasePlugin):
                     prepare_dialogs.setAccessible(True)
                     self.hook_method(prepare_dialogs, _AfterCreateView(self))
 
-            self._log(f"MAX Tab: hooks installed mainTabs={MainTabsActivity is not None}")
+            browser_hooks = 0
+            if Browser is not None:
+                browser_hooks += len(self.hook_all_methods(Browser, "openUrl", _BeforeOpenUrl(self)))
+                browser_hooks += len(self.hook_all_methods(Browser, "openUrlInSystemBrowser", _BeforeOpenUrl(self)))
+
+            self._log(f"MAX Tab: hooks installed mainTabs={MainTabsActivity is not None} browserHooks={browser_hooks}")
         except Exception as e:
             self._log(f"MAX Tab: hook install failed: {e}")
 
@@ -169,10 +186,13 @@ class MaxTabPlugin(BasePlugin):
             loader = DexClassLoader(dex_path, opt_dir, None, ctx.getClassLoader() or ClassLoader.getSystemClassLoader())
             self._bridge = loader.loadClass(ENTRY_CLASS)
             Object = self._class_ref("java.lang.Object")
+            String = self._class_ref("java.lang.String")
             self._bridge_install = self._bridge.getDeclaredMethod("installWithStatus", Object)
             self._bridge_install.setAccessible(True)
             self._bridge_hide = self._bridge.getDeclaredMethod("hide", Object)
             self._bridge_hide.setAccessible(True)
+            self._bridge_open_max_url = self._bridge.getDeclaredMethod("openMaxUrl", Object, String)
+            self._bridge_open_max_url.setAccessible(True)
             self._bridge_ready = True
             self._log(f"MAX Tab: dex bridge loaded from {dex_path}")
             for fragment in list(self._pending_fragments):
@@ -270,6 +290,58 @@ class MaxTabPlugin(BasePlugin):
                 self._bridge_hide.invoke(None, fragment)
             except Exception:
                 return
+
+    def handle_browser_open(self, param):
+        try:
+            args = list(param.args or [])
+            url = self._extract_url_arg(args)
+            if not url or not self._is_max_url(url):
+                return
+            if not self._bridge_ready or self._bridge_open_max_url is None:
+                self._log(f"MAX Tab: max link ignored because bridge is not ready url={url}")
+                return
+            source = args[0] if args else None
+            if source is None:
+                source = get_last_fragment()
+            result = self._bridge_open_max_url.invoke(None, source, url)
+            result_text = str(result)
+            self._log(f"MAX Tab: {result_text}")
+            if result_text.startswith("link: opened"):
+                param.setResult(None)
+        except Exception as e:
+            self._log(f"MAX Tab: link hook failed: {e}")
+
+    def _extract_url_arg(self, args):
+        for arg in args[1:] if len(args) > 1 else args:
+            if arg is None:
+                continue
+            try:
+                class_name = arg.getClass().getName()
+            except Exception:
+                class_name = ""
+            if class_name == "java.lang.String":
+                return str(arg)
+            if class_name == "android.net.Uri":
+                try:
+                    return str(arg.toString())
+                except Exception:
+                    return str(arg)
+        return None
+
+    def _is_max_url(self, url):
+        value = (str(url) if url is not None else "").strip()
+        if not value:
+            return False
+        lower = value.lower()
+        if lower.startswith(("max://", "oneme://")):
+            return True
+        candidate = value if "://" in value else f"https://{value}"
+        try:
+            parsed = urllib.parse.urlparse(candidate)
+            host = (parsed.hostname or "").lower()
+        except Exception:
+            return False
+        return host == "max.ru" or host.endswith(".max.ru")
 
     def copy_logs(self):
         dex_path = os.path.join(self._dex_dir(), "etg-max-bridge.dex")

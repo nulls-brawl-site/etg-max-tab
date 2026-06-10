@@ -29,6 +29,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.List;
 
 public final class MaxBridge {
     private static final int MAX_TAB_ID = 0x4d415858;
@@ -51,6 +52,40 @@ public final class MaxBridge {
 
     public static void install(Object dialogsActivity) {
         installWithStatus(dialogsActivity);
+    }
+
+    public static String openMaxUrl(Object source, String rawUrl) {
+        String url = normalizeMaxUrl(rawUrl);
+        if (url == null) {
+            return "link: ignored url=" + rawUrl;
+        }
+        Object target = findExistingDialogsActivity(source);
+        if (target == null) {
+            return "link: dialogsActivity not found url=" + url;
+        }
+        Object current = getLaunchFragment(false);
+        boolean closed = closeFragmentsAbove(getParentLayout(current), target);
+        if (!closed) {
+            closed = closeFragmentsAbove(getParentLayout(target), target);
+        }
+        if (!closed) {
+            Object launch = getLaunchActivity();
+            closed = closeFragmentsAbove(invokeNoArg(launch, "getActionBarLayout"), target);
+            if (!closed) {
+                closed = closeFragmentsAbove(getFieldObject(launch, "actionBarLayout"), target);
+            }
+            if (!closed) {
+                closeFragmentsAbove(getFieldObject(launch, "rightActionBarLayout"), target);
+            }
+        }
+        String result = openOnDialogsActivity(target, url);
+        View root = getFragmentView(target);
+        if (root != null) {
+            root.postDelayed(() -> openOnDialogsActivity(target, url), 120);
+            root.postDelayed(() -> openOnDialogsActivity(target, url), 420);
+            root.postDelayed(() -> openOnDialogsActivity(target, url), 900);
+        }
+        return result;
     }
 
     public static String installWithStatus(Object dialogsActivity) {
@@ -100,6 +135,324 @@ public final class MaxBridge {
         } catch (Throwable ignored) {
         }
         return null;
+    }
+
+    private static Object findExistingDialogsActivity(Object source) {
+        Object target = resolveDialogsActivity(source);
+        if (target != null) {
+            return target;
+        }
+        Object current = getLaunchFragment(true);
+        target = resolveDialogsActivity(current);
+        if (target != null) {
+            return target;
+        }
+        Object layout = getParentLayout(current);
+        target = findDialogsInLayout(layout);
+        if (target != null) {
+            return target;
+        }
+        Object launch = getLaunchActivity();
+        target = findDialogsInLayout(invokeNoArg(launch, "getActionBarLayout"));
+        if (target != null) {
+            return target;
+        }
+        target = findDialogsInLayout(getFieldObject(launch, "actionBarLayout"));
+        if (target != null) {
+            return target;
+        }
+        target = findDialogsInLayout(getFieldObject(launch, "rightActionBarLayout"));
+        if (target != null) {
+            return target;
+        }
+        target = findDialogsInLayout(getFieldObject(launch, "layersActionBarLayout"));
+        if (target != null) {
+            return target;
+        }
+        return findDialogsInStaticMainStack();
+    }
+
+    private static Object findDialogsInLayout(Object layout) {
+        if (layout == null) {
+            return null;
+        }
+        try {
+            Method method = layout.getClass().getMethod("getFragmentStack");
+            method.setAccessible(true);
+            Object value = method.invoke(layout);
+            if (!(value instanceof List)) {
+                return null;
+            }
+            List stack = (List) value;
+            for (int i = stack.size() - 1; i >= 0; i--) {
+                Object target = resolveDialogsActivity(stack.get(i));
+                if (target != null) {
+                    return target;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static Object findDialogsInStaticMainStack() {
+        try {
+            Class<?> launchClass = Class.forName("org.telegram.ui.LaunchActivity");
+            Field field = findField(launchClass, "mainFragmentsStack");
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            Object value = field.get(null);
+            if (!(value instanceof List)) {
+                return null;
+            }
+            List stack = (List) value;
+            for (int i = stack.size() - 1; i >= 0; i--) {
+                Object target = resolveDialogsActivity(stack.get(i));
+                if (target != null) {
+                    return target;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean closeFragmentsAbove(Object layout, Object target) {
+        try {
+            Method stackMethod = layout.getClass().getMethod("getFragmentStack");
+            stackMethod.setAccessible(true);
+            Object value = stackMethod.invoke(layout);
+            if (!(value instanceof List)) {
+                return false;
+            }
+            List stack = (List) value;
+            int targetIndex = -1;
+            for (int i = stack.size() - 1; i >= 0; i--) {
+                Object candidate = resolveDialogsActivity(stack.get(i));
+                if (candidate == target) {
+                    targetIndex = i;
+                    break;
+                }
+            }
+            if (targetIndex < 0) {
+                return false;
+            }
+            Method close = layout.getClass().getMethod("closeLastFragment", boolean.class);
+            close.setAccessible(true);
+            for (int i = stack.size() - 1; i > targetIndex && stack.size() > targetIndex + 1; i--) {
+                close.invoke(layout, false);
+            }
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String openOnDialogsActivity(Object dialogsActivity, String url) {
+        if (dialogsActivity == null) {
+            return "link: dialogsActivity=null";
+        }
+        Activity activity = getActivity(dialogsActivity);
+        View root = getFragmentView(dialogsActivity);
+        View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
+        if (activity == null || root == null || filterTabs == null) {
+            return "link: missing activity=" + (activity != null)
+                    + " root=" + (root != null)
+                    + " filterTabsView=" + (filterTabs != null);
+        }
+        cleanupOldStandaloneButton(root, filterTabs);
+        installFilterTab(dialogsActivity, activity, root, filterTabs);
+        captureCurrentRestorePoint(filterTabs, dialogsActivity);
+        int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
+        if (maxIndex < 0) {
+            return "link: max tab missing";
+        }
+        setIntField(filterTabs, "selectedTabId", MAX_TAB_ID);
+        setIntField(filterTabs, "currentPosition", maxIndex);
+        setIntField(filterTabs, "oldAnimatedTab", maxIndex);
+        setBooleanField(filterTabs, "animatingIndicator", false);
+        notifyTabsChanged(filterTabs);
+        showOverlay(activity, root, filterTabs, dialogsActivity, url);
+        return "link: opened " + url;
+    }
+
+    private static void captureCurrentRestorePoint(View filterTabs, Object dialogsActivity) {
+        try {
+            activeFilterTabs = filterTabs;
+            activeDialogsActivity = dialogsActivity;
+            activeOriginalDelegate = getOriginalDelegate(filterTabs);
+            Field delegateField = findField(filterTabs.getClass(), "delegate");
+            activeDelegateType = delegateField != null ? delegateField.getType() : null;
+            int selectedId = getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE);
+            int selectedPosition = getIntField(filterTabs, "currentPosition", -1);
+            if (selectedId == Integer.MIN_VALUE || selectedId == MAX_TAB_ID || selectedPosition < 0) {
+                selectedId = getDialogsSelectedType(dialogsActivity, 0);
+                selectedPosition = findTabPositionById(filterTabs, selectedId);
+            }
+            if (selectedId == Integer.MIN_VALUE || selectedId == MAX_TAB_ID || selectedPosition < 0) {
+                selectedPosition = firstRealTabPosition(filterTabs);
+                Object tab = getTabAt(filterTabs, selectedPosition);
+                selectedId = getIntField(tab, "id", Integer.MIN_VALUE);
+            }
+            restoreTabId = selectedId;
+            restorePosition = selectedPosition;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static int firstRealTabPosition(View filterTabs) {
+        try {
+            Field tabsField = findField(filterTabs.getClass(), "tabs");
+            if (tabsField == null) {
+                return -1;
+            }
+            tabsField.setAccessible(true);
+            Object value = tabsField.get(filterTabs);
+            if (!(value instanceof ArrayList)) {
+                return -1;
+            }
+            ArrayList tabs = (ArrayList) value;
+            for (int i = 0; i < tabs.size(); i++) {
+                int id = getIntField(tabs.get(i), "id", Integer.MIN_VALUE);
+                if (id != Integer.MIN_VALUE && id != MAX_TAB_ID) {
+                    return i;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
+    }
+
+    private static Object getOriginalDelegate(View filterTabs) {
+        try {
+            Field delegateField = findField(filterTabs.getClass(), "delegate");
+            if (delegateField == null) {
+                return null;
+            }
+            delegateField.setAccessible(true);
+            Object delegate = delegateField.get(filterTabs);
+            if (delegate == null) {
+                return null;
+            }
+            if (Proxy.isProxyClass(delegate.getClass())) {
+                InvocationHandler handler = Proxy.getInvocationHandler(delegate);
+                Field originalField = findField(handler.getClass(), "original");
+                if (originalField != null) {
+                    originalField.setAccessible(true);
+                    Object original = originalField.get(handler);
+                    if (original != null) {
+                        return original;
+                    }
+                }
+            }
+            return delegate;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object getLaunchFragment(boolean includeMainTabs) {
+        try {
+            Class<?> launchClass = Class.forName("org.telegram.ui.LaunchActivity");
+            Method method = launchClass.getMethod(includeMainTabs ? "getLastFragmentIncludeMainTabs" : "getLastFragment");
+            method.setAccessible(true);
+            return method.invoke(null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object getLaunchActivity() {
+        try {
+            Class<?> launchClass = Class.forName("org.telegram.ui.LaunchActivity");
+            Field field = findField(launchClass, "instance");
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            return field.get(null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object getParentLayout(Object fragment) {
+        try {
+            if (fragment == null) {
+                return null;
+            }
+            Method method = fragment.getClass().getMethod("getParentLayout");
+            method.setAccessible(true);
+            return method.invoke(fragment);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object invokeNoArg(Object target, String methodName) {
+        try {
+            if (target == null) {
+                return null;
+            }
+            Method method = target.getClass().getMethod(methodName);
+            method.setAccessible(true);
+            return method.invoke(target);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String normalizeMaxUrl(String rawUrl) {
+        if (rawUrl == null) {
+            return null;
+        }
+        String value = rawUrl.trim();
+        if (value.length() == 0) {
+            return null;
+        }
+        String lower = value.toLowerCase();
+        if (lower.startsWith("max://") || lower.startsWith("oneme://")) {
+            int scheme = value.indexOf("://");
+            String rest = scheme >= 0 ? value.substring(scheme + 3) : "";
+            while (rest.startsWith("/")) {
+                rest = rest.substring(1);
+            }
+            return URL + rest;
+        }
+        if (lower.startsWith("max.ru/") || "max.ru".equals(lower)) {
+            return "https://web." + value;
+        }
+        if (lower.startsWith("web.max.ru/") || "web.max.ru".equals(lower)) {
+            return "https://" + value;
+        }
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            return null;
+        }
+        try {
+            Uri uri = Uri.parse(value);
+            String host = uri.getHost();
+            if (host == null) {
+                return null;
+            }
+            String hostLower = host.toLowerCase();
+            if ("web.max.ru".equals(hostLower) || hostLower.endsWith(".web.max.ru")) {
+                return value;
+            }
+            if ("max.ru".equals(hostLower) || hostLower.endsWith(".max.ru")) {
+                Uri.Builder builder = uri.buildUpon();
+                builder.scheme("https");
+                builder.authority("web.max.ru");
+                return builder.build().toString();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean isMaxUrl(String rawUrl) {
+        return normalizeMaxUrl(rawUrl) != null;
     }
 
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
@@ -752,8 +1105,17 @@ public final class MaxBridge {
 
     @SuppressLint("SetJavaScriptEnabled")
     private static void showOverlay(Activity activity, View root, View filterTabs, Object dialogsActivity) {
+        showOverlay(activity, root, filterTabs, dialogsActivity, URL);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private static void showOverlay(Activity activity, View root, View filterTabs, Object dialogsActivity, String initialUrl) {
         if (!(root instanceof ViewGroup)) {
             return;
+        }
+        String loadUrl = normalizeMaxUrl(initialUrl);
+        if (loadUrl == null) {
+            loadUrl = URL;
         }
         ViewGroup parent = (ViewGroup) root;
         View old = parent.findViewWithTag(OVERLAY_TAG);
@@ -823,11 +1185,11 @@ public final class MaxBridge {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return shouldBlockNavigation(url);
+                return handleWebViewNavigation(view, url);
             }
 
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return request != null && shouldBlockNavigation(String.valueOf(request.getUrl()));
+                return request != null && handleWebViewNavigation(view, String.valueOf(request.getUrl()));
             }
         });
 
@@ -841,7 +1203,7 @@ public final class MaxBridge {
         overlay.requestFocus();
         hideSystemBars(activity);
         scheduleOverlayGuard(activity, parent, filterTabs, overlay, dialogsActivity);
-        webView.loadUrl(URL);
+        webView.loadUrl(loadUrl);
     }
 
     private static void scheduleOverlayGuard(Activity activity, ViewGroup root, View filterTabs, FrameLayout overlay, Object dialogsActivity) {
@@ -976,6 +1338,18 @@ public final class MaxBridge {
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
         });
+    }
+
+    private static boolean handleWebViewNavigation(WebView view, String url) {
+        String maxUrl = normalizeMaxUrl(url);
+        if (maxUrl != null) {
+            if (!maxUrl.equals(url) && view != null) {
+                view.loadUrl(maxUrl);
+                return true;
+            }
+            return false;
+        }
+        return shouldBlockNavigation(url);
     }
 
     private static boolean shouldBlockNavigation(String url) {
