@@ -1,5 +1,7 @@
 build/r8.jar
 build/classes/
+dex_beta/build/classes/
+dex_beta/build/d8/
 __pycache__/
 *.pyc
 *.tmp
