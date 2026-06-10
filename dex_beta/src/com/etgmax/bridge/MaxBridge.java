@@ -79,6 +79,7 @@ public final class MaxBridge {
     private static boolean previousDialogStoriesStateCaptured;
     private static boolean previousDialogStoriesAllowGlobalUpdates;
     private static boolean previousDialogStoriesAllowGlobalUpdatesCaptured;
+    private static int tabTransitionGeneration;
     private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -915,10 +916,12 @@ public final class MaxBridge {
             }
             if ("onPageSelected".equals(name) && args != null && args.length > 0) {
                 if (isMaxTab(args[0])) {
+                    cancelRegularSelectionRepairs();
                     rememberRestorePoint(filterTabs, original, delegateType, dialogsActivity);
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
+                int transitionGeneration = beginTabTransition();
                 int targetId = getRegularTargetTabId(filterTabs, args);
                 boolean leavingMax = isLeavingMax(root, filterTabs);
                 if (leavingMax) {
@@ -927,7 +930,7 @@ public final class MaxBridge {
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
                 if (leavingMax) {
-                    scheduleRegularSelectionRepair(dialogsActivity, root, targetId);
+                    scheduleRegularSelectionRepair(dialogsActivity, root, targetId, transitionGeneration);
                 }
                 return result;
             }
@@ -1211,11 +1214,23 @@ public final class MaxBridge {
         }
     }
 
+    private static int beginTabTransition() {
+        return ++tabTransitionGeneration;
+    }
+
+    private static void cancelRegularSelectionRepairs() {
+        tabTransitionGeneration++;
+    }
+
     private static void scheduleRegularSelectionRepair(Object dialogsActivity, View root, int targetId) {
+        scheduleRegularSelectionRepair(dialogsActivity, root, targetId, tabTransitionGeneration);
+    }
+
+    private static void scheduleRegularSelectionRepair(Object dialogsActivity, View root, int targetId, int transitionGeneration) {
         if (dialogsActivity == null || root == null || targetId == Integer.MIN_VALUE || targetId == MAX_TAB_ID) {
             return;
         }
-        Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId);
+        Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId, transitionGeneration);
         try {
             root.post(repair);
             root.postDelayed(repair, 40);
@@ -1226,8 +1241,11 @@ public final class MaxBridge {
         }
     }
 
-    private static void repairRegularSelection(Object dialogsActivity, int targetId) {
+    private static void repairRegularSelection(Object dialogsActivity, int targetId, int transitionGeneration) {
         try {
+            if (transitionGeneration != tabTransitionGeneration) {
+                return;
+            }
             View root = getFragmentView(dialogsActivity);
             View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
             if (root == null || filterTabs == null || !isRegularTabId(filterTabs, targetId)) {
@@ -2032,8 +2050,9 @@ public final class MaxBridge {
                     if (selectedId != Integer.MIN_VALUE && findTabPositionById(currentFilterTabs, selectedId) >= 0) {
                         nonMaxFrames[0]++;
                         if (nonMaxFrames[0] >= 2) {
+                            int transitionGeneration = beginTabTransition();
                             closeOverlayAfterRegularSelection(root);
-                            scheduleRegularSelectionRepair(dialogsActivity, root, selectedId);
+                            scheduleRegularSelectionRepair(dialogsActivity, root, selectedId, transitionGeneration);
                             return;
                         }
                     } else {
