@@ -15,14 +15,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
 DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/latest/download/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "8c018a8bbeb412ba9db9756d80d36f16dc4ec18e5c136bfbca0f6488c2365273"
+DEFAULT_DEX_SHA256 = "12e226b7de8731d2ccc02b174f5134b6821c4c15d47ee2a1fe57f631b763a8cc"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
@@ -58,6 +58,8 @@ class MaxTabPlugin(BasePlugin):
     def on_plugin_load(self):
         self._log_lines = []
         self._bridge = None
+        self._bridge_install = None
+        self._bridge_hide = None
         self._bridge_ready = False
         self._pending_fragments = []
         self._hooks = []
@@ -134,6 +136,11 @@ class MaxTabPlugin(BasePlugin):
             DexClassLoader = jclass("dalvik.system.DexClassLoader")
             loader = DexClassLoader(dex_path, opt_dir, None, ctx.getClassLoader() or ClassLoader.getSystemClassLoader())
             self._bridge = loader.loadClass(ENTRY_CLASS)
+            Object = self._class_ref("java.lang.Object")
+            self._bridge_install = self._bridge.getDeclaredMethod("installWithStatus", Object)
+            self._bridge_install.setAccessible(True)
+            self._bridge_hide = self._bridge.getDeclaredMethod("hide", Object)
+            self._bridge_hide.setAccessible(True)
             self._bridge_ready = True
             self._log(f"MAX Tab: dex bridge loaded from {dex_path}")
             for fragment in list(self._pending_fragments):
@@ -203,10 +210,7 @@ class MaxTabPlugin(BasePlugin):
                 self._pending_fragments.append(fragment)
             return
         try:
-            try:
-                result = self._bridge.installWithStatus(fragment)
-            except Exception:
-                result = self._bridge.install(fragment)
+            result = self._bridge_install.invoke(None, fragment)
             self._log(f"MAX Tab: {result}")
         except Exception as e:
             self._log(f"MAX Tab: install failed: {e}")
@@ -229,9 +233,9 @@ class MaxTabPlugin(BasePlugin):
             self._log(f"MAX Tab: current fragment install failed: {e}")
 
     def hide_tab(self, fragment):
-        if self._bridge_ready and fragment is not None:
+        if self._bridge_ready and self._bridge_hide is not None and fragment is not None:
             try:
-                self._bridge.hide(fragment)
+                self._bridge_hide.invoke(None, fragment)
             except Exception:
                 return
 

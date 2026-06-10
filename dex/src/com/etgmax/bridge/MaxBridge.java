@@ -43,9 +43,13 @@ public final class MaxBridge {
         if (dialogsActivity == null) {
             return "install: fragment=null";
         }
-        Activity activity = getActivity(dialogsActivity);
-        View root = getFragmentView(dialogsActivity);
-        View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
+        Object target = resolveDialogsActivity(dialogsActivity);
+        if (target == null) {
+            return "install: dialogsActivity not resolved from " + dialogsActivity.getClass().getName();
+        }
+        Activity activity = getActivity(target);
+        View root = getFragmentView(target);
+        View filterTabs = getFieldView(target, "filterTabsView");
         if (activity == null || root == null || filterTabs == null) {
             return "install: missing activity=" + (activity != null)
                     + " root=" + (root != null)
@@ -74,6 +78,35 @@ public final class MaxBridge {
             }
         });
         return "install: fallback text tab added children=" + tabsContainer.getChildCount();
+    }
+
+    private static Object resolveDialogsActivity(Object fragment) {
+        if (fragment == null) {
+            return null;
+        }
+        if ("org.telegram.ui.DialogsActivity".equals(fragment.getClass().getName())) {
+            return fragment;
+        }
+        try {
+            Method method = fragment.getClass().getMethod("getDialogsActivity");
+            Object value = method.invoke(fragment);
+            if (value != null && "org.telegram.ui.DialogsActivity".equals(value.getClass().getName())) {
+                return value;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Field field = findField(fragment.getClass(), "dialogsActivity");
+            if (field != null) {
+                field.setAccessible(true);
+                Object value = field.get(fragment);
+                if (value != null && "org.telegram.ui.DialogsActivity".equals(value.getClass().getName())) {
+                    return value;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static String installFilterTabsView(Activity activity, View root, View filterTabs) {
@@ -244,7 +277,8 @@ public final class MaxBridge {
     }
 
     public static void hide(Object dialogsActivity) {
-        View root = getFragmentView(dialogsActivity);
+        Object target = resolveDialogsActivity(dialogsActivity);
+        View root = getFragmentView(target);
         if (root instanceof ViewGroup) {
             View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
             if (overlay != null) {
