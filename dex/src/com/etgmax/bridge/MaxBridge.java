@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.util.SparseIntArray;
 import android.view.Gravity;
@@ -11,7 +12,11 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -34,8 +39,12 @@ public final class MaxBridge {
     private static View activeFilterTabs;
     private static Object activeOriginalDelegate;
     private static Class<?> activeDelegateType;
+    private static Object activeDialogsActivity;
     private static int restoreTabId = Integer.MIN_VALUE;
     private static int restorePosition = -1;
+    private static View systemBarsDecor;
+    private static int previousSystemUiVisibility;
+    private static boolean systemBarsHidden;
 
     private MaxBridge() {
     }
@@ -146,6 +155,7 @@ public final class MaxBridge {
                     setIntField(filterTabs, "oldAnimatedTab", maxIndex);
                 }
                 activeFilterTabs = filterTabs;
+                activeDialogsActivity = dialogsActivity;
             }
             notifyTabsChanged(filterTabs);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
@@ -332,6 +342,7 @@ public final class MaxBridge {
             activeFilterTabs = filterTabs;
             activeOriginalDelegate = originalDelegate;
             activeDelegateType = delegateType;
+            activeDialogsActivity = dialogsActivity;
             int previousId = getIntField(filterTabs, "previousId", Integer.MIN_VALUE);
             int previousPos = getIntField(filterTabs, "previousPosition", -1);
             if (previousId == Integer.MIN_VALUE || previousId == MAX_TAB_ID || previousPos < 0) {
@@ -362,9 +373,11 @@ public final class MaxBridge {
         View filterTabs = activeFilterTabs;
         Object originalDelegate = activeOriginalDelegate;
         Class<?> delegateType = activeDelegateType;
+        Object dialogsActivity = activeDialogsActivity;
         activeFilterTabs = null;
         activeOriginalDelegate = null;
         activeDelegateType = null;
+        activeDialogsActivity = null;
         try {
             if (filterTabs == null || getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID) {
                 restoreTabId = Integer.MIN_VALUE;
@@ -402,6 +415,10 @@ public final class MaxBridge {
                 notifyTabsChanged(filterTabs);
                 Object tab = getTabAt(filterTabs, pos);
                 dispatchRestoreSelection(originalDelegate, delegateType, tab);
+                if (dialogsActivity != null) {
+                    int currentType = getDialogsSelectedType(dialogsActivity, 0);
+                    forceDialogsSwitch(dialogsActivity, currentType == id ? Boolean.FALSE : Boolean.TRUE);
+                }
             }
         } catch (Throwable ignored) {
         } finally {
@@ -484,6 +501,19 @@ public final class MaxBridge {
     }
 
     private static void forceDialogsSwitch(Object dialogsActivity, Boolean page) {
+        if (dialogsActivity == null || page == null) {
+            return;
+        }
+        forceDialogsSwitchNow(dialogsActivity, page);
+        View root = getFragmentView(dialogsActivity);
+        if (root != null) {
+            final boolean targetPage = page.booleanValue();
+            root.postDelayed(() -> forceDialogsSwitchNow(dialogsActivity, Boolean.valueOf(targetPage)), 80);
+            root.postDelayed(() -> forceDialogsSwitchNow(dialogsActivity, Boolean.valueOf(targetPage)), 240);
+        }
+    }
+
+    private static void forceDialogsSwitchNow(Object dialogsActivity, Boolean page) {
         if (dialogsActivity == null || page == null) {
             return;
         }
@@ -573,28 +603,37 @@ public final class MaxBridge {
     }
 
     private static void hideOverlay(View root) {
-        if (root instanceof ViewGroup) {
-            View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
-            if (overlay != null) {
-                ((ViewGroup) root).removeView(overlay);
-                destroyWebViewsLater(root, overlay);
+        try {
+            if (root instanceof ViewGroup) {
+                View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
+                if (overlay != null) {
+                    ((ViewGroup) root).removeView(overlay);
+                    destroyWebViewsLater(root, overlay);
+                }
+                restoreSelectionIfCurrentMax();
             }
-            restoreSelectionIfCurrentMax();
+        } finally {
+            restoreSystemBars();
         }
     }
 
     private static void closeOverlayAfterRegularSelection(View root) {
-        if (root instanceof ViewGroup) {
-            View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
-            if (overlay != null) {
-                ((ViewGroup) root).removeView(overlay);
-                destroyWebViewsLater(root, overlay);
+        try {
+            if (root instanceof ViewGroup) {
+                View overlay = ((ViewGroup) root).findViewWithTag(OVERLAY_TAG);
+                if (overlay != null) {
+                    ((ViewGroup) root).removeView(overlay);
+                    destroyWebViewsLater(root, overlay);
+                }
             }
             activeFilterTabs = null;
             activeOriginalDelegate = null;
             activeDelegateType = null;
+            activeDialogsActivity = null;
             restoreTabId = Integer.MIN_VALUE;
             restorePosition = -1;
+        } finally {
+            restoreSystemBars();
         }
     }
 
@@ -674,8 +713,38 @@ public final class MaxBridge {
                 progress.setProgress(newProgress);
                 progress.setVisibility(newProgress >= 100 ? View.GONE : View.VISIBLE);
             }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                if (request != null) {
+                    request.deny();
+                }
+            }
+
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                if (callback != null) {
+                    callback.invoke(origin, false, false);
+                }
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
+                }
+                return true;
+            }
         });
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return shouldBlockNavigation(url);
+            }
+
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return request != null && shouldBlockNavigation(String.valueOf(request.getUrl()));
+            }
         });
 
         int top = estimateTopMargin(parent, filterTabs);
@@ -686,7 +755,66 @@ public final class MaxBridge {
             overlay.setTranslationZ(dp(activity, 256));
         }
         overlay.requestFocus();
+        hideSystemBars(activity);
+        scheduleOverlayGuard(activity, parent, filterTabs, overlay, dialogsActivity);
         webView.loadUrl(URL);
+    }
+
+    private static void scheduleOverlayGuard(Activity activity, ViewGroup root, View filterTabs, FrameLayout overlay, Object dialogsActivity) {
+        final Runnable[] guard = new Runnable[1];
+        guard[0] = () -> {
+            try {
+                if (overlay.getParent() == null) {
+                    restoreSelectionIfCurrentMax();
+                    restoreSystemBars();
+                    return;
+                }
+                if (!root.isShown()
+                        || !filterTabs.isShown()
+                        || activeFilterTabs != filterTabs
+                        || getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != MAX_TAB_ID
+                        || isSearchVisible(dialogsActivity)) {
+                    hideOverlay(root);
+                    return;
+                }
+                updateOverlayBounds(root, filterTabs, overlay);
+                overlay.bringToFront();
+                if (Build.VERSION.SDK_INT >= 21) {
+                    overlay.setElevation(dp(activity, 256));
+                    overlay.setTranslationZ(dp(activity, 256));
+                }
+                hideSystemBars(activity);
+                overlay.postDelayed(guard[0], 250);
+            } catch (Throwable ignored) {
+                hideOverlay(root);
+            }
+        };
+        overlay.postDelayed(guard[0], 250);
+    }
+
+    private static void updateOverlayBounds(ViewGroup root, View filterTabs, FrameLayout overlay) {
+        try {
+            int top = estimateTopMargin(root, filterTabs);
+            ViewGroup.LayoutParams raw = overlay.getLayoutParams();
+            if (raw instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) raw;
+                boolean changed = lp.topMargin != top
+                        || lp.width != ViewGroup.LayoutParams.MATCH_PARENT
+                        || lp.height != ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.topMargin = top;
+                lp.leftMargin = 0;
+                lp.rightMargin = 0;
+                lp.bottomMargin = 0;
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                if (changed) {
+                    overlay.setLayoutParams(lp);
+                }
+                return;
+            }
+            overlay.setLayoutParams(makeOverlayLayoutParams(root, top));
+        } catch (Throwable ignored) {
+        }
     }
 
     private static ViewGroup.LayoutParams makeOverlayLayoutParams(ViewGroup parent, int topMargin) {
@@ -719,9 +847,16 @@ public final class MaxBridge {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
+        s.setGeolocationEnabled(false);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        if (Build.VERSION.SDK_INT >= 16) {
+            s.setAllowFileAccessFromFileURLs(false);
+            s.setAllowUniversalAccessFromFileURLs(false);
+        }
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
-        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setMediaPlaybackRequiresUserGesture(true);
         s.setSupportMultipleWindows(false);
         if (Build.VERSION.SDK_INT >= 21) {
             s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
@@ -729,6 +864,106 @@ public final class MaxBridge {
         }
         CookieManager.getInstance().setAcceptCookie(true);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
+        });
+    }
+
+    private static boolean shouldBlockNavigation(String url) {
+        if (url == null) {
+            return true;
+        }
+        String value = url.trim().toLowerCase();
+        return !(value.startsWith("https://") || value.startsWith("http://"));
+    }
+
+    private static boolean isSearchVisible(Object dialogsActivity) {
+        if (dialogsActivity == null) {
+            return false;
+        }
+        if (invokeBooleanNoArg(getFieldObject(dialogsActivity, "searchItem"), "isSearchFieldVisible")) {
+            return true;
+        }
+        return invokeBooleanNoArg(getFieldObject(dialogsActivity, "actionBar"), "isSearchFieldVisible");
+    }
+
+    private static boolean invokeBooleanNoArg(Object target, String methodName) {
+        if (target == null) {
+            return false;
+        }
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            method.setAccessible(true);
+            Object value = method.invoke(target);
+            return value instanceof Boolean && (Boolean) value;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Object getFieldObject(Object target, String name) {
+        if (target == null) {
+            return null;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            return field.get(target);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void hideSystemBars(Activity activity) {
+        if (activity == null || activity.getWindow() == null) {
+            return;
+        }
+        try {
+            View decor = activity.getWindow().getDecorView();
+            if (decor == null) {
+                return;
+            }
+            int flags = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            if (!systemBarsHidden || systemBarsDecor != decor) {
+                restoreSystemBars();
+                systemBarsDecor = decor;
+                previousSystemUiVisibility = decor.getSystemUiVisibility();
+                systemBarsHidden = true;
+                decor.setOnSystemUiVisibilityChangeListener(visibility -> {
+                    if (systemBarsHidden && systemBarsDecor == decor) {
+                        decor.postDelayed(() -> {
+                            if (systemBarsHidden && systemBarsDecor == decor) {
+                                decor.setSystemUiVisibility(decor.getSystemUiVisibility() | flags);
+                            }
+                        }, 80);
+                    }
+                });
+            }
+            decor.setSystemUiVisibility(previousSystemUiVisibility | flags);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void restoreSystemBars() {
+        try {
+            View decor = systemBarsDecor;
+            if (decor != null) {
+                decor.setOnSystemUiVisibilityChangeListener(null);
+                decor.setSystemUiVisibility(previousSystemUiVisibility);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            systemBarsDecor = null;
+            previousSystemUiVisibility = 0;
+            systemBarsHidden = false;
+        }
     }
 
     private static int estimateTopMargin(ViewGroup root, View filterTabs) {
