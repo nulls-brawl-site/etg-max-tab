@@ -16,14 +16,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.5.8"
+__version__ = "1.5.9"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.8/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "37e041548d6d0e19037bd3546c54b5188f27814f47241f4831befb7ff4c37038"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.9/etg-max-bridge.dex"
+DEFAULT_DEX_SHA256 = "8b9704a774ecbee5df0d0399652f104fe66e9370e03098f98e1f560d4a3941c6"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
@@ -44,6 +44,7 @@ LEGACY_DEX_SHA256 = (
     "fd8a333c215365586100433e1162f04120f26cfb4dbe39f75cd112ad0f0e6003",
     "b45a54a6317708f1781e7a3f5b0976477883516213d48e153c29884f9052c775",
     "6a89b637e1a33e0b854ef8bfe0c654b0edad9725e74593afa39bff9423fcddd7",
+    "37e041548d6d0e19037bd3546c54b5188f27814f47241f4831befb7ff4c37038",
 )
 
 
@@ -79,6 +80,14 @@ class _BeforeOpenUrl(MethodHook):
         self.plugin.handle_browser_open(param)
 
 
+class _BeforeUrlSpanClick(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        self.plugin.handle_url_span_click(param)
+
+
 class MaxTabPlugin(BasePlugin):
     def on_plugin_load(self):
         self._log_lines = []
@@ -88,12 +97,14 @@ class MaxTabPlugin(BasePlugin):
         self._bridge_open_max_url = None
         self._bridge_ready = False
         self._pending_fragments = []
+        self._pending_max_links = []
         self._hooks = []
         run_on_queue(self._load_bridge, PLUGINS_QUEUE)
         self._install_hooks()
 
     def on_plugin_unload(self):
         self._pending_fragments = []
+        self._pending_max_links = []
 
     def create_settings(self) -> List[Any]:
         return [
@@ -133,6 +144,7 @@ class MaxTabPlugin(BasePlugin):
         MainTabsActivity = self._class_ref("org.telegram.ui.MainTabsActivity")
         Browser = self._class_ref("org.telegram.messenger.browser.Browser")
         Context = self._class_ref("android.content.Context")
+        View = self._class_ref("android.view.View")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
             self._log(f"MAX Tab: class lookup failed DialogsActivity={DialogsActivity is not None} Context={Context is not None}")
@@ -170,7 +182,25 @@ class MaxTabPlugin(BasePlugin):
                 browser_hooks += len(self.hook_all_methods(Browser, "openUrl", _BeforeOpenUrl(self)))
                 browser_hooks += len(self.hook_all_methods(Browser, "openUrlInSystemBrowser", _BeforeOpenUrl(self)))
 
-            self._log(f"MAX Tab: hooks installed mainTabs={MainTabsActivity is not None} browserHooks={browser_hooks}")
+            span_hooks = 0
+            if View is not None:
+                for class_name in (
+                    "org.telegram.ui.Components.URLSpanNoUnderline",
+                    "org.telegram.ui.Components.URLSpanBrowser",
+                    "org.telegram.ui.Components.URLSpanReplacement",
+                ):
+                    span = self._class_ref(class_name)
+                    if span is None:
+                        continue
+                    try:
+                        on_click = span.getDeclaredMethod("onClick", View)
+                        on_click.setAccessible(True)
+                        self.hook_method(on_click, _BeforeUrlSpanClick(self))
+                        span_hooks += 1
+                    except Exception as e:
+                        self._log(f"MAX Tab: span hook failed {class_name}: {e}")
+
+            self._log(f"MAX Tab: hooks installed mainTabs={MainTabsActivity is not None} browserHooks={browser_hooks} spanHooks={span_hooks}")
         except Exception as e:
             self._log(f"MAX Tab: hook install failed: {e}")
 
@@ -198,6 +228,9 @@ class MaxTabPlugin(BasePlugin):
             for fragment in list(self._pending_fragments):
                 self.install_tab(fragment)
             self._pending_fragments = []
+            for source, url in list(self._pending_max_links):
+                run_on_ui_thread(lambda source=source, url=url: self._route_max_url(source, url), 0)
+            self._pending_max_links = []
             self._schedule_current_fragment_install()
         except Exception as e:
             self._log(f"MAX Tab: dex load failed: {e}")
@@ -297,24 +330,63 @@ class MaxTabPlugin(BasePlugin):
             url = self._extract_url_arg(args)
             if not url or not self._is_max_url(url):
                 return
-            if not self._bridge_ready or self._bridge_open_max_url is None:
-                self._log(f"MAX Tab: max link ignored because bridge is not ready url={url}")
-                return
             source = args[0] if args else None
+            if self._route_max_url(source, url):
+                param.setResult(None)
+        except Exception as e:
+            self._log(f"MAX Tab: link hook failed: {e}")
+
+    def handle_url_span_click(self, param):
+        try:
+            url = self._get_span_url(param.thisObject)
+            if not url or not self._is_max_url(url):
+                return
+            args = list(param.args or [])
+            source = args[0] if args else None
+            if self._route_max_url(source, url):
+                param.setResult(None)
+        except Exception as e:
+            self._log(f"MAX Tab: span link hook failed: {e}")
+
+    def _route_max_url(self, source, url):
+        if not url or not self._is_max_url(url):
+            return False
+        if not self._bridge_ready or self._bridge_open_max_url is None:
+            if (source, url) not in self._pending_max_links:
+                self._pending_max_links.append((source, url))
+                self._pending_max_links = self._pending_max_links[-8:]
+            self._log(f"MAX Tab: max link queued until bridge is ready url={url}")
+            return True
+        try:
             if source is None:
                 source = get_last_fragment()
             result = self._bridge_open_max_url.invoke(None, source, url)
             result_text = str(result)
             self._log(f"MAX Tab: {result_text}")
-            if result_text.startswith("link: opened"):
-                param.setResult(None)
+            return result_text.startswith("link: opened")
         except Exception as e:
-            self._log(f"MAX Tab: link hook failed: {e}")
+            self._log(f"MAX Tab: route max link failed: {e}")
+            return False
+
+    def _get_span_url(self, span):
+        if span is None:
+            return None
+        try:
+            return str(span.getURL())
+        except Exception:
+            pass
+        try:
+            method = span.getClass().getMethod("getURL")
+            return str(method.invoke(span))
+        except Exception:
+            return None
 
     def _extract_url_arg(self, args):
         for arg in args[1:] if len(args) > 1 else args:
             if arg is None:
                 continue
+            if isinstance(arg, str):
+                return arg
             try:
                 class_name = arg.getClass().getName()
             except Exception:
@@ -326,7 +398,28 @@ class MaxTabPlugin(BasePlugin):
                     return str(arg.toString())
                 except Exception:
                     return str(arg)
+            try:
+                text = str(arg.toString())
+                if self._looks_like_max_url(text):
+                    return text
+            except Exception:
+                pass
+            try:
+                text = str(arg)
+                if self._looks_like_max_url(text):
+                    return text
+            except Exception:
+                pass
         return None
+
+    def _looks_like_max_url(self, url):
+        value = (str(url) if url is not None else "").strip().lower()
+        return (
+            value.startswith(("max://", "oneme://", "https://max.ru", "http://max.ru", "https://web.max.ru", "http://web.max.ru"))
+            or value == "max.ru"
+            or value.startswith("max.ru/")
+            or ".max.ru/" in value
+        )
 
     def _is_max_url(self, url):
         value = (str(url) if url is not None else "").strip()
