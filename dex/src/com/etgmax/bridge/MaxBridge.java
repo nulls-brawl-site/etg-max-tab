@@ -63,6 +63,7 @@ public final class MaxBridge {
         if (getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) == MAX_TAB_ID) {
             int restoreId = chooseRestoreTabId(filterTabs, target);
             setFilterTabsSelectionFields(filterTabs, restoreId);
+            normalizeDialogsSelection(target, filterTabs, restoreId);
         }
     }
 
@@ -749,8 +750,16 @@ public final class MaxBridge {
                     showOverlay(activity, root, filterTabs, dialogsActivity);
                     return defaultValue(method.getReturnType());
                 }
+                int targetId = getRegularTargetTabId(filterTabs, args);
+                boolean leavingMax = isLeavingMax(root, filterTabs);
+                if (leavingMax) {
+                    prepareRegularSelectionFromMax(dialogsActivity, filterTabs, targetId);
+                }
                 Object result = method.invoke(original, args);
                 closeOverlayAfterRegularSelection(root);
+                if (leavingMax) {
+                    scheduleRegularSelectionRepair(dialogsActivity, root, targetId);
+                }
                 return result;
             }
             if ("onTabSelected".equals(name) && args != null && args.length > 0) {
@@ -822,6 +831,13 @@ public final class MaxBridge {
             activeOriginalDelegate = originalDelegate;
             activeDelegateType = delegateType;
             activeDialogsActivity = dialogsActivity;
+            int selectedId = getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE);
+            int selectedPos = getIntField(filterTabs, "currentPosition", -1);
+            if (isRegularTabId(filterTabs, selectedId) && selectedPos >= 0) {
+                restoreTabId = selectedId;
+                restorePosition = selectedPos;
+                return;
+            }
             int previousId = getIntField(filterTabs, "previousId", Integer.MIN_VALUE);
             int previousPos = getIntField(filterTabs, "previousPosition", -1);
             if (previousId == Integer.MIN_VALUE || previousId == MAX_TAB_ID || previousPos < 0) {
@@ -846,6 +862,42 @@ public final class MaxBridge {
             restorePosition = previousPos;
         } catch (Throwable ignored) {
         }
+    }
+
+    private static boolean isLeavingMax(View root, View filterTabs) {
+        try {
+            if (root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null) {
+                return true;
+            }
+            if (activeFilterTabs == filterTabs) {
+                return true;
+            }
+            return getIntField(filterTabs, "previousId", Integer.MIN_VALUE) == MAX_TAB_ID;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void prepareRegularSelectionFromMax(Object dialogsActivity, View filterTabs, int targetId) {
+        if (!isRegularTabId(filterTabs, targetId)) {
+            return;
+        }
+        int previousId = restoreTabId;
+        if (!isRegularTabId(filterTabs, previousId)) {
+            previousId = getDialogsSelectedType(dialogsActivity, 0);
+        }
+        if (!isRegularTabId(filterTabs, previousId)) {
+            previousId = getDialogsSelectedType(dialogsActivity, 1);
+        }
+        if (!isRegularTabId(filterTabs, previousId)) {
+            previousId = targetId;
+        }
+        int previousPos = findTabPositionById(filterTabs, previousId);
+        if (previousPos >= 0) {
+            setIntField(filterTabs, "previousId", previousId);
+            setIntField(filterTabs, "previousPosition", previousPos);
+        }
+        normalizeDialogsSelection(dialogsActivity, filterTabs, previousId);
     }
 
     private static void restoreSelectionIfCurrentMax() {
@@ -950,6 +1002,82 @@ public final class MaxBridge {
             return true;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    private static void normalizeDialogsSelection(Object dialogsActivity, View filterTabs, int fallbackId) {
+        try {
+            if (dialogsActivity == null || filterTabs == null) {
+                return;
+            }
+            int safeId = fallbackId;
+            if (!isRegularTabId(filterTabs, safeId)) {
+                safeId = chooseRestoreTabId(filterTabs, dialogsActivity);
+            }
+            if (!isRegularTabId(filterTabs, safeId)) {
+                Object tab = getTabAt(filterTabs, firstRealTabPosition(filterTabs));
+                safeId = getIntField(tab, "id", Integer.MIN_VALUE);
+            }
+            if (!isRegularTabId(filterTabs, safeId)) {
+                return;
+            }
+            Field viewPagesField = findField(dialogsActivity.getClass(), "viewPages");
+            if (viewPagesField == null) {
+                return;
+            }
+            viewPagesField.setAccessible(true);
+            Object value = viewPagesField.get(dialogsActivity);
+            if (!(value instanceof Object[])) {
+                return;
+            }
+            Object[] pages = (Object[]) value;
+            for (Object page : pages) {
+                int selectedType = getIntField(page, "selectedType", Integer.MIN_VALUE);
+                if (!isRegularTabId(filterTabs, selectedType)) {
+                    setIntField(page, "selectedType", safeId);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void scheduleRegularSelectionRepair(Object dialogsActivity, View root, int targetId) {
+        if (dialogsActivity == null || root == null || targetId == Integer.MIN_VALUE || targetId == MAX_TAB_ID) {
+            return;
+        }
+        Runnable repair = () -> repairRegularSelection(dialogsActivity, targetId);
+        try {
+            root.postDelayed(repair, 120);
+            root.postDelayed(repair, 420);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void repairRegularSelection(Object dialogsActivity, int targetId) {
+        try {
+            View root = getFragmentView(dialogsActivity);
+            View filterTabs = getFieldView(dialogsActivity, "filterTabsView");
+            if (root == null || filterTabs == null || !isRegularTabId(filterTabs, targetId)) {
+                return;
+            }
+            if (root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null) {
+                return;
+            }
+            if (getIntField(filterTabs, "selectedTabId", Integer.MIN_VALUE) != targetId) {
+                return;
+            }
+            normalizeDialogsSelection(dialogsActivity, filterTabs, targetId);
+            int page0 = getDialogsSelectedType(dialogsActivity, 0);
+            int page1 = getDialogsSelectedType(dialogsActivity, 1);
+            if (page0 == targetId) {
+                forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
+            } else if (page1 == targetId) {
+                forceDialogsSwitchNow(dialogsActivity, Boolean.TRUE);
+            } else {
+                setDialogsSelectedType(dialogsActivity, 0, targetId);
+                forceDialogsSwitchNow(dialogsActivity, Boolean.FALSE);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
