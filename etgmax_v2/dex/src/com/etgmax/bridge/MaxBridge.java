@@ -936,8 +936,8 @@ public final class MaxBridge {
                     View child = group.getChildAt(i);
                     Object tab = getFieldObject(child, "currentTab");
                     boolean maxTab = isMaxTab(tab);
+                    ensureDrawableField(child, "icon");
                     if (maxTab || hasTabEmoticon(tab)) {
-                        ensureDrawableField(child, "icon");
                         ensureDrawableField(child, "iconAnimateInDrawable");
                         ensureDrawableField(child, "iconAnimateOutDrawable");
                     }
@@ -967,10 +967,44 @@ public final class MaxBridge {
         try {
             Object value = getFieldObject(target, name);
             if (!(value instanceof Drawable)) {
-                setObjectField(target, name, new ColorDrawable(Color.TRANSPARENT));
+                setObjectField(target, name, createFallbackTabIcon(target));
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private static Drawable createFallbackTabIcon(Object target) {
+        Drawable drawable = null;
+        try {
+            Context context = target instanceof View ? ((View) target).getContext() : null;
+            if (context != null) {
+                Class<?> drawables = Class.forName("org.telegram.messenger.R$drawable");
+                Field field = findField(drawables, "filter_custom");
+                if (field != null) {
+                    field.setAccessible(true);
+                    int resId = field.getInt(null);
+                    if (resId != 0) {
+                        drawable = Build.VERSION.SDK_INT >= 21
+                                ? context.getDrawable(resId)
+                                : context.getResources().getDrawable(resId);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (drawable == null) {
+            drawable = new ColorDrawable(Color.TRANSPARENT);
+        }
+        try {
+            drawable = drawable.mutate();
+            int width = getFolderIconWidth();
+            if (width <= 0) {
+                width = 24;
+            }
+            drawable.setBounds(0, 0, width, width);
+        } catch (Throwable ignored) {
+        }
+        return drawable;
     }
 
     private static void showMaxOverlayFromTab(Activity activity, View root, View filterTabs, Object dialogsActivity) {
@@ -3776,6 +3810,17 @@ public final class MaxBridge {
         try {
             Class<?> icons = Class.forName("com.exteragram.messenger.utils.ui.FolderIcons");
             Method method = icons.getMethod("getPaddingTab");
+            Object value = method.invoke(null);
+            return value instanceof Integer ? (Integer) value : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private static int getFolderIconWidth() {
+        try {
+            Class<?> icons = Class.forName("com.exteragram.messenger.utils.ui.FolderIcons");
+            Method method = icons.getMethod("getIconWidth");
             Object value = method.invoke(null);
             return value instanceof Integer ? (Integer) value : 0;
         } catch (Throwable ignored) {
