@@ -62,7 +62,8 @@ public final class MaxBridge {
         ViewGroup tabsContainer = findTabsContainer(filterTabs);
         if (tabsContainer == null || tabsContainer.findViewWithTag(TAB_TAG) != null) {
             return "install: fallback tabsContainer=" + (tabsContainer != null)
-                    + " existing=" + (tabsContainer != null && tabsContainer.findViewWithTag(TAB_TAG) != null);
+                    + " existing=" + (tabsContainer != null && tabsContainer.findViewWithTag(TAB_TAG) != null)
+                    + " filterTabsClass=" + filterTabs.getClass().getName();
         }
         TextView tab = createTab(activity);
         tab.setTag(TAB_TAG);
@@ -110,25 +111,24 @@ public final class MaxBridge {
     }
 
     private static String installFilterTabsView(Activity activity, View root, View filterTabs) {
-        if (!filterTabs.getClass().getName().equals("org.telegram.ui.Components.FilterTabsView")) {
-            return null;
-        }
         try {
             Field tabsField = findField(filterTabs.getClass(), "tabs");
             if (tabsField == null) {
-                return "install: FilterTabsView tabs field=null";
+                return null;
             }
             tabsField.setAccessible(true);
             Object tabsValue = tabsField.get(filterTabs);
             if (!(tabsValue instanceof ArrayList)) {
-                return "install: FilterTabsView tabs not ArrayList";
+                return "install: tabs field not ArrayList class=" + filterTabs.getClass().getName();
             }
             ArrayList<?> tabs = (ArrayList<?>) tabsValue;
             for (Object tab : tabs) {
                 if (getIntField(tab, "id", Integer.MIN_VALUE) == MAX_TAB_ID) {
                     boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
                     notifyTabsChanged(filterTabs);
-                    return "install: FilterTabsView already present tabs=" + tabs.size() + " delegateWrapped=" + wrapped;
+                    return "install: tab already present tabs=" + tabs.size()
+                            + " delegateWrapped=" + wrapped
+                            + " class=" + filterTabs.getClass().getName();
                 }
             }
 
@@ -148,9 +148,14 @@ public final class MaxBridge {
             filterTabs.setTag(TAB_TAG);
             boolean wrapped = wrapFilterTabsDelegate(activity, root, filterTabs);
             notifyTabsChanged(filterTabs);
-            return "install: FilterTabsView added before=" + before + " after=" + tabs.size() + " delegateWrapped=" + wrapped;
+            return "install: tab added before=" + before
+                    + " after=" + tabs.size()
+                    + " delegateWrapped=" + wrapped
+                    + " class=" + filterTabs.getClass().getName();
         } catch (Throwable e) {
-            return "install: FilterTabsView error=" + e.getClass().getSimpleName() + ":" + e.getMessage();
+            return "install: tab add error=" + e.getClass().getSimpleName()
+                    + ":" + e.getMessage()
+                    + " class=" + filterTabs.getClass().getName();
         }
     }
 
@@ -191,6 +196,7 @@ public final class MaxBridge {
                 Object adapter = adapterField.get(filterTabs);
                 if (adapter != null) {
                     Method notify = adapter.getClass().getMethod("notifyDataSetChanged");
+                    notify.setAccessible(true);
                     notify.invoke(adapter);
                 }
             }
