@@ -558,6 +558,7 @@ public final class MaxBridge {
     private static String installFilterTab(Object dialogsActivity, Activity activity, View root, View filterTabs) {
         if (isMaxTabInstalledAtEnd(filterTabs) && isWrappedMaxDelegate(filterTabs)) {
             hardenMaxTabVisualState(root, filterTabs, activity);
+            requestMaxTabRebindIfMissing(root, filterTabs, activity);
             boolean overlayActive = root instanceof ViewGroup && ((ViewGroup) root).findViewWithTag(OVERLAY_TAG) != null;
             if (overlayActive) {
                 int maxIndex = findTabPositionById(filterTabs, MAX_TAB_ID);
@@ -630,6 +631,7 @@ public final class MaxBridge {
             }
             notifyTabsChanged(filterTabs);
             hardenMaxTabVisualState(root, filterTabs, activity);
+            requestMaxTabRebindIfMissing(root, filterTabs, activity);
             return "tab: installed real locked=false removedOld=" + (removedIndex >= 0)
                     + " tabs=" + tabs.size()
                     + " wrapped=" + wrapped
@@ -747,6 +749,52 @@ public final class MaxBridge {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private static void requestMaxTabRebindIfMissing(View root, View filterTabs, Activity activity) {
+        if (root == null || filterTabs == null || findTabPositionById(filterTabs, MAX_TAB_ID) < 0) {
+            return;
+        }
+        try {
+            root.post(() -> rebindMaxTabIfMissing(filterTabs, activity));
+            root.postDelayed(() -> rebindMaxTabIfMissing(filterTabs, activity), 120);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void rebindMaxTabIfMissing(View filterTabs, Activity activity) {
+        try {
+            if (filterTabs == null || findTabPositionById(filterTabs, MAX_TAB_ID) < 0) {
+                return;
+            }
+            if (getBooleanField(filterTabs, "animatingIndicator", false) || !filterTabs.isShown()) {
+                return;
+            }
+            if (isMaxTabBoundToVisibleChild(filterTabs)) {
+                hardenFilterTabsDrawState(filterTabs, activity);
+                return;
+            }
+            notifyTabsChanged(filterTabs);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isMaxTabBoundToVisibleChild(View filterTabs) {
+        try {
+            View listView = getFieldView(filterTabs, "listView");
+            if (!(listView instanceof ViewGroup)) {
+                return false;
+            }
+            ViewGroup group = (ViewGroup) listView;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View child = group.getChildAt(i);
+                if (isMaxTab(getFieldObject(child, "currentTab"))) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static int getTabsCount(View filterTabs) {
@@ -884,11 +932,14 @@ public final class MaxBridge {
                 ViewGroup group = (ViewGroup) listView;
                 for (int i = 0; i < group.getChildCount(); i++) {
                     View child = group.getChildAt(i);
-                    ensureDrawableField(child, "icon");
-                    ensureDrawableField(child, "iconAnimateInDrawable");
-                    ensureDrawableField(child, "iconAnimateOutDrawable");
                     Object tab = getFieldObject(child, "currentTab");
-                    if (isMaxTab(tab)) {
+                    boolean maxTab = isMaxTab(tab);
+                    if (maxTab || hasTabEmoticon(tab)) {
+                        ensureDrawableField(child, "icon");
+                        ensureDrawableField(child, "iconAnimateInDrawable");
+                        ensureDrawableField(child, "iconAnimateOutDrawable");
+                    }
+                    if (maxTab) {
                         setBooleanField(tab, "isLocked", false);
                         setFloatField(child, "progressToLocked", 0f);
                         setFloatField(child, "locIconXOffset", 0f);
@@ -897,6 +948,15 @@ public final class MaxBridge {
                 }
             }
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean hasTabEmoticon(Object tab) {
+        try {
+            Object emoticon = getFieldObject(tab, "emoticon");
+            return emoticon instanceof String && ((String) emoticon).length() > 0;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
