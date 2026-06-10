@@ -61,6 +61,16 @@ public final class MaxBridge {
     private static boolean previousFloatingButtonHidden;
     private static Object hiddenMainTabsController;
     private static boolean mainTabsControllerHidden;
+    private static Object hiddenStoriesDialogsActivity;
+    private static boolean storiesStateCaptured;
+    private static boolean previousHasStories;
+    private static boolean previousDialogStoriesCellVisible;
+    private static boolean previousHasOnlySelfStories;
+    private static boolean previousAnimateToHasStories;
+    private static float previousProgressToDialogStoriesCell;
+    private static float previousProgressToShowStories;
+    private static boolean previousDialogStoriesAllowGlobalUpdates;
+    private static boolean previousDialogStoriesAllowGlobalUpdatesCaptured;
     private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -1683,6 +1693,7 @@ public final class MaxBridge {
                 hideFieldView(dialogsActivity, "writeButton");
                 hideFieldView(dialogsActivity, "storyHint");
                 hideFieldView(dialogsActivity, "storyPremiumHint");
+                suppressTelegramStories(dialogsActivity);
                 Object controller = getFieldObject(dialogsActivity, "mainTabsActivityController");
                 if (controller != null) {
                     hiddenMainTabsController = controller;
@@ -1739,6 +1750,7 @@ public final class MaxBridge {
             String name = view.getClass().getName();
             if ("org.telegram.ui.MainTabsLayout".equals(name)
                     || name.contains("FragmentFloatingButton")
+                    || name.contains("DialogStoriesCell")
                     || name.endsWith("ChatActivityEnterView$SendButton")
                     || name.contains("BottomSheetTabs")) {
                 return true;
@@ -1764,6 +1776,8 @@ public final class MaxBridge {
             invokeNoArg(view, "hide");
             view.setClickable(false);
             view.setEnabled(false);
+            view.setFocusable(false);
+            view.setFocusableInTouchMode(false);
             view.setAlpha(0f);
             view.setVisibility(View.GONE);
         } catch (Throwable ignored) {
@@ -1795,6 +1809,7 @@ public final class MaxBridge {
     private static void restoreTelegramChrome() {
         Object dialogsActivity = hiddenChromeDialogsActivity;
         try {
+            restoreTelegramStories(dialogsActivity);
             if (dialogsActivity != null && floatingButtonHiddenCaptured) {
                 setBooleanField(dialogsActivity, "floatingButtonHidden", previousFloatingButtonHidden);
             }
@@ -1815,6 +1830,90 @@ public final class MaxBridge {
             previousFloatingButtonHidden = false;
             hiddenMainTabsController = null;
             mainTabsControllerHidden = false;
+        }
+    }
+
+    private static void suppressTelegramStories(Object dialogsActivity) {
+        if (dialogsActivity == null) {
+            return;
+        }
+        try {
+            if (!storiesStateCaptured || hiddenStoriesDialogsActivity != dialogsActivity) {
+                hiddenStoriesDialogsActivity = dialogsActivity;
+                previousHasStories = getBooleanField(dialogsActivity, "hasStories", false);
+                previousDialogStoriesCellVisible = getBooleanField(dialogsActivity, "dialogStoriesCellVisible", false);
+                previousHasOnlySelfStories = getBooleanField(dialogsActivity, "hasOnlySlefStories", false);
+                previousAnimateToHasStories = getBooleanField(dialogsActivity, "animateToHasStories", false);
+                previousProgressToDialogStoriesCell = getFloatField(dialogsActivity, "progressToDialogStoriesCell", 0f);
+                previousProgressToShowStories = getFloatField(dialogsActivity, "progressToShowStories", 0f);
+                previousDialogStoriesAllowGlobalUpdatesCaptured = false;
+                Object stories = getFieldObject(dialogsActivity, "dialogStoriesCell");
+                if (stories != null) {
+                    previousDialogStoriesAllowGlobalUpdates = getBooleanField(stories, "allowGlobalUpdates", true);
+                    previousDialogStoriesAllowGlobalUpdatesCaptured = true;
+                }
+                storiesStateCaptured = true;
+            }
+
+            cancelAnimator(getFieldObject(dialogsActivity, "storiesVisibilityAnimator"));
+            cancelAnimator(getFieldObject(dialogsActivity, "storiesVisibilityAnimator2"));
+            setBooleanField(dialogsActivity, "hasStories", false);
+            setBooleanField(dialogsActivity, "dialogStoriesCellVisible", false);
+            setBooleanField(dialogsActivity, "hasOnlySlefStories", false);
+            setBooleanField(dialogsActivity, "animateToHasStories", false);
+            setFloatField(dialogsActivity, "progressToDialogStoriesCell", 0f);
+            setFloatField(dialogsActivity, "progressToShowStories", 0f);
+
+            Object stories = getFieldObject(dialogsActivity, "dialogStoriesCell");
+            if (stories instanceof View) {
+                View storiesView = (View) stories;
+                rememberHiddenView(storiesView);
+                cancelViewAnimations(storiesView);
+                cancelAnimator(getFieldObject(stories, "valueAnimator"));
+                cancelAnimator(getFieldObject(stories, "valueAnimator2"));
+                cancelAnimator(getFieldObject(stories, "storiesAnimatorSet"));
+                setBooleanField(stories, "allowGlobalUpdates", false);
+                setBooleanField(stories, "collapsed", true);
+                invokeFloatBooleanArgMethod(stories, "setProgressToCollapse", 1f, false);
+                storiesView.setClickable(false);
+                storiesView.setEnabled(false);
+                storiesView.setFocusable(false);
+                storiesView.setFocusableInTouchMode(false);
+                storiesView.setAlpha(0f);
+                storiesView.setTranslationY(-Math.max(storiesView.getHeight(), dp(storiesView.getContext(), 96)));
+                storiesView.setVisibility(View.GONE);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void restoreTelegramStories(Object dialogsActivity) {
+        Object target = hiddenStoriesDialogsActivity != null ? hiddenStoriesDialogsActivity : dialogsActivity;
+        try {
+            if (target != null && storiesStateCaptured) {
+                setBooleanField(target, "hasStories", previousHasStories);
+                setBooleanField(target, "dialogStoriesCellVisible", previousDialogStoriesCellVisible);
+                setBooleanField(target, "hasOnlySlefStories", previousHasOnlySelfStories);
+                setBooleanField(target, "animateToHasStories", previousAnimateToHasStories);
+                setFloatField(target, "progressToDialogStoriesCell", previousProgressToDialogStoriesCell);
+                setFloatField(target, "progressToShowStories", previousProgressToShowStories);
+                Object stories = getFieldObject(target, "dialogStoriesCell");
+                if (stories != null && previousDialogStoriesAllowGlobalUpdatesCaptured) {
+                    setBooleanField(stories, "allowGlobalUpdates", previousDialogStoriesAllowGlobalUpdates);
+                }
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            hiddenStoriesDialogsActivity = null;
+            storiesStateCaptured = false;
+            previousHasStories = false;
+            previousDialogStoriesCellVisible = false;
+            previousHasOnlySelfStories = false;
+            previousAnimateToHasStories = false;
+            previousProgressToDialogStoriesCell = 0f;
+            previousProgressToShowStories = 0f;
+            previousDialogStoriesAllowGlobalUpdates = false;
+            previousDialogStoriesAllowGlobalUpdatesCaptured = false;
         }
     }
 
@@ -2571,15 +2670,21 @@ public final class MaxBridge {
         final View view;
         final int visibility;
         final float alpha;
+        final float translationY;
         final boolean enabled;
         final boolean clickable;
+        final boolean focusable;
+        final boolean focusableInTouchMode;
 
         HiddenViewState(View view) {
             this.view = view;
             this.visibility = view.getVisibility();
             this.alpha = view.getAlpha();
+            this.translationY = view.getTranslationY();
             this.enabled = view.isEnabled();
             this.clickable = view.isClickable();
+            this.focusable = view.isFocusable();
+            this.focusableInTouchMode = view.isFocusableInTouchMode();
         }
 
         void restore() {
@@ -2587,8 +2692,11 @@ public final class MaxBridge {
                 if (view != null) {
                     cancelViewAnimations(view);
                     view.setAlpha(alpha);
+                    view.setTranslationY(translationY);
                     view.setEnabled(enabled);
                     view.setClickable(clickable);
+                    view.setFocusable(focusable);
+                    view.setFocusableInTouchMode(focusableInTouchMode);
                     view.setVisibility(visibility);
                 }
             } catch (Throwable ignored) {
@@ -2749,6 +2857,31 @@ public final class MaxBridge {
                 method.setAccessible(true);
                 method.invoke(target, first, second);
             }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void invokeFloatBooleanArgMethod(Object target, String methodName, float first, boolean second) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Method method = findMethod(target.getClass(), methodName, float.class, boolean.class);
+            if (method != null) {
+                method.setAccessible(true);
+                method.invoke(target, first, second);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void cancelAnimator(Object animator) {
+        if (animator == null) {
+            return;
+        }
+        try {
+            invokeNoArg(animator, "removeAllListeners");
+            invokeNoArg(animator, "cancel");
         } catch (Throwable ignored) {
         }
     }
@@ -2983,6 +3116,22 @@ public final class MaxBridge {
         }
     }
 
+    private static float getFloatField(Object target, String name, float fallback) {
+        if (target == null) {
+            return fallback;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return fallback;
+            }
+            field.setAccessible(true);
+            return field.getFloat(target);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
     private static void setBooleanField(Object target, String name, boolean value) {
         if (target == null) {
             return;
@@ -2992,6 +3141,20 @@ public final class MaxBridge {
             if (field != null) {
                 field.setAccessible(true);
                 field.setBoolean(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void setFloatField(Object target, String name, float value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field != null) {
+                field.setAccessible(true);
+                field.setFloat(target, value);
             }
         } catch (Throwable ignored) {
         }
