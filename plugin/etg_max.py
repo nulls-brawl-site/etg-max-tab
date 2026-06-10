@@ -16,14 +16,14 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.5.9"
+__version__ = "1.6.0"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgmax.bridge.MaxBridge"
-DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.5.9/etg-max-bridge.dex"
-DEFAULT_DEX_SHA256 = "8b9704a774ecbee5df0d0399652f104fe66e9370e03098f98e1f560d4a3941c6"
+DEFAULT_DEX_URL = "https://github.com/nulls-brawl-site/etg-max-tab/releases/download/v1.6.0/etg-max-bridge.dex"
+DEFAULT_DEX_SHA256 = "00e534f593551a4426c792148643d634eaa23033219202dba24b1500f6c90050"
 LEGACY_DEX_SHA256 = (
     "6436d0ade8aaa3df803339d4079995a04dead3204b9ff51310f24d361ffca40f",
     "6d84663146d83c6bd01396344f557442698f7f4fd774739b57a77f8c8291fd4c",
@@ -45,6 +45,7 @@ LEGACY_DEX_SHA256 = (
     "b45a54a6317708f1781e7a3f5b0976477883516213d48e153c29884f9052c775",
     "6a89b637e1a33e0b854ef8bfe0c654b0edad9725e74593afa39bff9423fcddd7",
     "37e041548d6d0e19037bd3546c54b5188f27814f47241f4831befb7ff4c37038",
+    "8b9704a774ecbee5df0d0399652f104fe66e9370e03098f98e1f560d4a3941c6",
 )
 
 
@@ -62,6 +63,14 @@ class _AfterUpdateTabs(MethodHook):
 
     def after_hooked_method(self, param):
         self.plugin.install_tab(param.thisObject)
+
+
+class _BeforeUpdateTabs(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        self.plugin.before_update_tabs(param.thisObject)
 
 
 class _BeforeDestroy(MethodHook):
@@ -93,6 +102,7 @@ class MaxTabPlugin(BasePlugin):
         self._log_lines = []
         self._bridge = None
         self._bridge_install = None
+        self._bridge_before_update = None
         self._bridge_hide = None
         self._bridge_open_max_url = None
         self._bridge_ready = False
@@ -156,6 +166,7 @@ class MaxTabPlugin(BasePlugin):
 
             update_tabs = DialogsActivity.getDeclaredMethod("updateFilterTabs", Boolean.TYPE, Boolean.TYPE)
             update_tabs.setAccessible(True)
+            self.hook_method(update_tabs, _BeforeUpdateTabs(self))
             self.hook_method(update_tabs, _AfterUpdateTabs(self))
 
             destroy = DialogsActivity.getDeclaredMethod("onFragmentDestroy")
@@ -219,6 +230,8 @@ class MaxTabPlugin(BasePlugin):
             String = self._class_ref("java.lang.String")
             self._bridge_install = self._bridge.getDeclaredMethod("installWithStatus", Object)
             self._bridge_install.setAccessible(True)
+            self._bridge_before_update = self._bridge.getDeclaredMethod("beforeUpdateFilterTabs", Object)
+            self._bridge_before_update.setAccessible(True)
             self._bridge_hide = self._bridge.getDeclaredMethod("hide", Object)
             self._bridge_hide.setAccessible(True)
             self._bridge_open_max_url = self._bridge.getDeclaredMethod("openMaxUrl", Object, String)
@@ -299,6 +312,13 @@ class MaxTabPlugin(BasePlugin):
             self._log(f"MAX Tab: {result}")
         except Exception as e:
             self._log(f"MAX Tab: install failed: {e}")
+
+    def before_update_tabs(self, fragment):
+        if self._bridge_ready and self._bridge_before_update is not None and fragment is not None:
+            try:
+                self._bridge_before_update.invoke(None, fragment)
+            except Exception as e:
+                self._log(f"MAX Tab: before update failed: {e}")
 
     def _schedule_current_fragment_install(self):
         if not self._bridge_ready:
