@@ -55,6 +55,12 @@ public final class MaxBridge {
     private static int previousNavigationBarColor;
     private static boolean previousBarColorsSaved;
     private static boolean systemBarsHidden;
+    private static final ArrayList<HiddenViewState> hiddenTelegramChromeViews = new ArrayList<>();
+    private static Object hiddenChromeDialogsActivity;
+    private static boolean floatingButtonHiddenCaptured;
+    private static boolean previousFloatingButtonHidden;
+    private static Object hiddenMainTabsController;
+    private static boolean mainTabsControllerHidden;
     private static final int IMMERSIVE_SYSTEM_UI_FLAGS = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -1365,6 +1371,7 @@ public final class MaxBridge {
                 restoreSelectionIfCurrentMax();
             }
         } finally {
+            restoreTelegramChrome();
             restoreSystemBars();
         }
     }
@@ -1385,6 +1392,7 @@ public final class MaxBridge {
             restoreTabId = Integer.MIN_VALUE;
             restorePosition = -1;
         } finally {
+            restoreTelegramChrome();
             restoreSystemBars();
         }
     }
@@ -1401,6 +1409,7 @@ public final class MaxBridge {
             int restoredId = restoreSelectionFieldsOnly();
             scheduleSearchSafeReload(dialogsActivity, restoredId);
         } finally {
+            restoreTelegramChrome();
             restoreSystemBars();
         }
     }
@@ -1494,6 +1503,7 @@ public final class MaxBridge {
                 existing.setTranslationZ(dp(activity, 256));
             }
             existing.requestFocus();
+            hideTelegramChrome(activity, parent, existing, dialogsActivity);
             hideSystemBars(activity);
             WebView webView = findWebView(existing);
             if (webView != null) {
@@ -1590,6 +1600,7 @@ public final class MaxBridge {
             overlay.setTranslationZ(dp(activity, 256));
         }
         overlay.requestFocus();
+        hideTelegramChrome(activity, parent, overlay, dialogsActivity);
         hideSystemBars(activity);
         scheduleOverlayGuard(activity, parent, filterTabs, overlay, dialogsActivity);
         webView.loadUrl(loadUrl);
@@ -1604,6 +1615,7 @@ public final class MaxBridge {
             try {
                 if (overlay.getParent() == null) {
                     restoreSelectionIfCurrentMax();
+                    restoreTelegramChrome();
                     restoreSystemBars();
                     return;
                 }
@@ -1643,6 +1655,7 @@ public final class MaxBridge {
                     overlay.setElevation(dp(activity, 256));
                     overlay.setTranslationZ(dp(activity, 256));
                 }
+                hideTelegramChrome(activity, root, overlay, dialogsActivity);
                 hideSystemBars(activity);
                 overlay.postDelayed(guard[0], 250);
             } catch (Throwable ignored) {
@@ -1650,6 +1663,219 @@ public final class MaxBridge {
             }
         };
         overlay.postDelayed(guard[0], 250);
+    }
+
+    private static void hideTelegramChrome(Activity activity, ViewGroup root, View overlay, Object dialogsActivity) {
+        try {
+            if (dialogsActivity != null && hiddenChromeDialogsActivity != null && hiddenChromeDialogsActivity != dialogsActivity) {
+                restoreTelegramChrome();
+            }
+            if (dialogsActivity != null) {
+                hiddenChromeDialogsActivity = dialogsActivity;
+                if (!floatingButtonHiddenCaptured) {
+                    previousFloatingButtonHidden = getBooleanField(dialogsActivity, "floatingButtonHidden", false);
+                    floatingButtonHiddenCaptured = true;
+                }
+                setBooleanField(dialogsActivity, "floatingButtonHidden", true);
+                invokeBooleanArgMethod(dialogsActivity, "updateFloatingButtonVisibility", false);
+                hideFieldView(dialogsActivity, "floatingButton3");
+                hideFieldView(dialogsActivity, "floatingButtonStories");
+                hideFieldView(dialogsActivity, "writeButton");
+                hideFieldView(dialogsActivity, "storyHint");
+                hideFieldView(dialogsActivity, "storyPremiumHint");
+                Object controller = getFieldObject(dialogsActivity, "mainTabsActivityController");
+                if (controller != null) {
+                    hiddenMainTabsController = controller;
+                    mainTabsControllerHidden = true;
+                    invokeBooleanArgMethod(controller, "setTabsVisible", false);
+                }
+            }
+            Object mainTabs = findMainTabsActivity(dialogsActivity);
+            if (mainTabs != null) {
+                hideFieldView(mainTabs, "tabsView");
+                hideFieldView(mainTabs, "fadeView");
+            }
+            if (root != null) {
+                hideTelegramChromeInTree(root, overlay, root.getHeight());
+            }
+            if (activity != null && activity.getWindow() != null) {
+                View decor = activity.getWindow().getDecorView();
+                if (decor != null && decor != root) {
+                    hideTelegramChromeInTree(decor, overlay, decor.getHeight());
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void hideFieldView(Object target, String fieldName) {
+        View view = getFieldView(target, fieldName);
+        if (view != null) {
+            hideTelegramChromeView(view);
+        }
+    }
+
+    private static void hideTelegramChromeInTree(View view, View overlay, int rootHeight) {
+        try {
+            if (view == null || view == overlay) {
+                return;
+            }
+            if (isTelegramChromeCandidate(view, rootHeight)) {
+                hideTelegramChromeView(view);
+                return;
+            }
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = 0; i < group.getChildCount(); i++) {
+                    hideTelegramChromeInTree(group.getChildAt(i), overlay, rootHeight);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isTelegramChromeCandidate(View view, int rootHeight) {
+        try {
+            String name = view.getClass().getName();
+            if ("org.telegram.ui.MainTabsLayout".equals(name)
+                    || name.contains("FragmentFloatingButton")
+                    || name.endsWith("ChatActivityEnterView$SendButton")
+                    || name.contains("BottomSheetTabs")) {
+                return true;
+            }
+            if (rootHeight > 0 && name.contains("MainTabsLayout")) {
+                int[] pos = new int[2];
+                view.getLocationOnScreen(pos);
+                return pos[1] + Math.max(view.getHeight(), 1) > rootHeight * 0.55f;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static void hideTelegramChromeView(View view) {
+        try {
+            if (view == null) {
+                return;
+            }
+            rememberHiddenView(view);
+            cancelViewAnimations(view);
+            invokeBooleanPairMethod(view, "setButtonVisible", false, false);
+            invokeNoArg(view, "hide");
+            view.setClickable(false);
+            view.setEnabled(false);
+            view.setAlpha(0f);
+            view.setVisibility(View.GONE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void rememberHiddenView(View view) {
+        try {
+            for (int i = 0; i < hiddenTelegramChromeViews.size(); i++) {
+                if (hiddenTelegramChromeViews.get(i).view == view) {
+                    return;
+                }
+            }
+            hiddenTelegramChromeViews.add(new HiddenViewState(view));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void cancelViewAnimations(View view) {
+        try {
+            view.clearAnimation();
+            if (Build.VERSION.SDK_INT >= 12) {
+                view.animate().cancel();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void restoreTelegramChrome() {
+        Object dialogsActivity = hiddenChromeDialogsActivity;
+        try {
+            if (dialogsActivity != null && floatingButtonHiddenCaptured) {
+                setBooleanField(dialogsActivity, "floatingButtonHidden", previousFloatingButtonHidden);
+            }
+            if (mainTabsControllerHidden && hiddenMainTabsController != null) {
+                invokeBooleanArgMethod(hiddenMainTabsController, "setTabsVisible", isBottomNavigationVisible());
+            }
+            for (int i = hiddenTelegramChromeViews.size() - 1; i >= 0; i--) {
+                hiddenTelegramChromeViews.get(i).restore();
+            }
+            if (dialogsActivity != null) {
+                invokeBooleanArgMethod(dialogsActivity, "updateFloatingButtonVisibility", false);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            hiddenTelegramChromeViews.clear();
+            hiddenChromeDialogsActivity = null;
+            floatingButtonHiddenCaptured = false;
+            previousFloatingButtonHidden = false;
+            hiddenMainTabsController = null;
+            mainTabsControllerHidden = false;
+        }
+    }
+
+    private static Object findMainTabsActivity(Object dialogsActivity) {
+        Object current = getLaunchFragment(true);
+        if (isClassName(current, "org.telegram.ui.MainTabsActivity")) {
+            return current;
+        }
+        Object layout = getParentLayout(dialogsActivity);
+        Object found = findFragmentInLayout(layout, "org.telegram.ui.MainTabsActivity");
+        if (found != null) {
+            return found;
+        }
+        Object launch = getLaunchActivity();
+        found = findFragmentInLayout(invokeNoArg(launch, "getActionBarLayout"), "org.telegram.ui.MainTabsActivity");
+        if (found != null) {
+            return found;
+        }
+        found = findFragmentInLayout(getFieldObject(launch, "actionBarLayout"), "org.telegram.ui.MainTabsActivity");
+        if (found != null) {
+            return found;
+        }
+        return findFragmentInLayout(getFieldObject(launch, "rightActionBarLayout"), "org.telegram.ui.MainTabsActivity");
+    }
+
+    private static Object findFragmentInLayout(Object layout, String className) {
+        if (layout == null) {
+            return null;
+        }
+        try {
+            Method method = layout.getClass().getMethod("getFragmentStack");
+            method.setAccessible(true);
+            Object value = method.invoke(layout);
+            if (!(value instanceof List)) {
+                return null;
+            }
+            List stack = (List) value;
+            for (int i = stack.size() - 1; i >= 0; i--) {
+                Object item = stack.get(i);
+                if (isClassName(item, className)) {
+                    return item;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean isClassName(Object object, String className) {
+        return object != null && className.equals(object.getClass().getName());
+    }
+
+    private static boolean isBottomNavigationVisible() {
+        try {
+            Class<?> cls = Class.forName("com.exteragram.messenger.ExteraConfig$BottomNavigationBar");
+            Method method = cls.getMethod("visible");
+            Object value = method.invoke(null);
+            return value instanceof Boolean && (Boolean) value;
+        } catch (Throwable ignored) {
+            return true;
+        }
     }
 
     private static WebView findWebView(View view) {
@@ -2341,6 +2567,35 @@ public final class MaxBridge {
         return out.toString();
     }
 
+    private static final class HiddenViewState {
+        final View view;
+        final int visibility;
+        final float alpha;
+        final boolean enabled;
+        final boolean clickable;
+
+        HiddenViewState(View view) {
+            this.view = view;
+            this.visibility = view.getVisibility();
+            this.alpha = view.getAlpha();
+            this.enabled = view.isEnabled();
+            this.clickable = view.isClickable();
+        }
+
+        void restore() {
+            try {
+                if (view != null) {
+                    cancelViewAnimations(view);
+                    view.setAlpha(alpha);
+                    view.setEnabled(enabled);
+                    view.setClickable(clickable);
+                    view.setVisibility(visibility);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
     private static final class TelegramThemeSnapshot {
         boolean dark;
         String bg;
@@ -2467,6 +2722,34 @@ public final class MaxBridge {
             return value instanceof Boolean && (Boolean) value;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    private static void invokeBooleanArgMethod(Object target, String methodName, boolean value) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Method method = findMethod(target.getClass(), methodName, boolean.class);
+            if (method != null) {
+                method.setAccessible(true);
+                method.invoke(target, value);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void invokeBooleanPairMethod(Object target, String methodName, boolean first, boolean second) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Method method = findMethod(target.getClass(), methodName, boolean.class, boolean.class);
+            if (method != null) {
+                method.setAccessible(true);
+                method.invoke(target, first, second);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -2654,6 +2937,34 @@ public final class MaxBridge {
             }
         }
         return null;
+    }
+
+    private static Method findMethod(Class<?> cls, String name, Class<?>... parameterTypes) {
+        Class<?> c = cls;
+        while (c != null) {
+            try {
+                return c.getDeclaredMethod(name, parameterTypes);
+            } catch (NoSuchMethodException ignored) {
+                c = c.getSuperclass();
+            }
+        }
+        return null;
+    }
+
+    private static boolean getBooleanField(Object target, String name, boolean fallback) {
+        if (target == null) {
+            return fallback;
+        }
+        try {
+            Field field = findField(target.getClass(), name);
+            if (field == null) {
+                return fallback;
+            }
+            field.setAccessible(true);
+            return field.getBoolean(target);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
     }
 
     private static int getIntField(Object target, String name, int fallback) {
