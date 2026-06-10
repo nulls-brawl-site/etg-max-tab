@@ -2462,6 +2462,10 @@ public final class MaxBridge {
             if (isRenderableWallpaperDrawable(cached)) {
                 return cached;
             }
+            Drawable blockingCached = invokeStaticDrawableNoArg(theme, "getCachedWallpaper");
+            if (isRenderableWallpaperDrawable(blockingCached)) {
+                return blockingCached;
+            }
             Method method = theme.getMethod("getThemedWallpaper", boolean.class, View.class);
             Object value = method.invoke(null, false, anchor);
             Drawable themed = value instanceof Drawable ? (Drawable) value : null;
@@ -2516,7 +2520,7 @@ public final class MaxBridge {
                 ? "url(\"" + t.wallpaperImage + "\")"
                 : "none";
         StringBuilder css = new StringBuilder(22000);
-        css.append(":root,html[data-etg-max-theme],html[data-etg-max-theme] body,html[data-etg-max-theme] body *{");
+        css.append(":root,html[data-etg-max-theme],html[data-etg-max-theme] body{");
         css.append("color-scheme:").append(t.dark ? "dark" : "light").append("!important;");
         appendCssVar(css, "background-primary", t.bg);
         appendCssVar(css, "background-secondary", t.bgSecondary);
@@ -2786,53 +2790,42 @@ public final class MaxBridge {
         appendCssVar(css, "etg-max-wallpaper-layer", wallpaperLayer);
         appendCssVar(css, "etg-max-wallpaper-gradient", "linear-gradient(135deg," + t.wallpaper + "," + t.wallpaperTo1 + " 55%," + t.wallpaperTo2 + ")");
         css.append("}");
-        css.append("html,body,#app,.app,[class*=layout],[class*=screen]{background:").append(t.bg)
-                .append("!important;color:").append(t.text).append("!important;}");
-        css.append("aside,.aside,.navigation,.folders,.tabs,.tabbar,.header,.player,.collapsedCall,.settings,.modal,.actionsMenu,.popoverMobileSheet,.dropdown{background:")
-                .append(t.bg).append("!important;color:").append(t.text).append("!important;}");
-        css.append(".layout,.panel,.profileDeleteBanner,.answerList,.buttons,.content,.sticky:before{background:")
-                .append(t.bgSurface).append("!important;color:").append(t.text).append("!important;}");
-        css.append(".search,.input,.fieldPlaceholder,input,textarea,[contenteditable=true]{background:")
-                .append(t.bgTertiary).append("!important;color:").append(t.panelText)
-                .append("!important;caret-color:").append(t.accent).append("!important;border-color:")
-                .append(t.strokeTransparent).append("!important;}");
-        css.append(".field::placeholder,input::placeholder,textarea::placeholder{color:").append(t.hint).append("!important;}");
-        css.append(".button--active,.tab--active,.active-slide,.item--active,.profile--active,.wrapper--selected{color:")
-                .append(t.accent).append("!important;}");
-        css.append(".actionsMenuItem,.dropdownItem,.country,.item,.cell{color:")
-                .append(t.text).append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
-        css.append(".cell,.item,.actionsMenuItem,.dropdownItem{background-color:transparent!important;}");
-        css.append(".cell:hover,.item:hover,.actionsMenuItem:not(:disabled):hover,.dropdownItem:hover,.wrapper:hover .cell,.wrapper:focus .cell{background-color:")
-                .append(t.bgHover).append("!important;}");
-        css.append(".cell--selected,.item--active,.profile--active,.wrapper--selected{background:")
-                .append(t.bgSelected).append("!important;}");
-        css.append(".background.svelte-1afbb1c,.layer-base.svelte-1afbb1c,.layer-additional.svelte-1afbb1c,.layer-pattern.svelte-1afbb1c{")
-                .append("background-image:var(--etg-max-wallpaper-layer)!important;")
+        css.append("html[data-etg-max-theme],html[data-etg-max-theme] body{")
+                .append("color-scheme:").append(t.dark ? "dark" : "light").append("!important;")
                 .append("background-color:").append(t.bg).append("!important;")
-                .append("background-size:cover!important;background-position:center!important;background-repeat:repeat!important;opacity:1!important;}");
-        css.append(".container.svelte-fxkkld .message{background:").append(t.capsule)
-                .append("!important;color:").append(t.text).append("!important;}");
-        css.append(".widget:not(.widget--plain),[class*=post],[class*=card],[class*=surface],.profileDeleteBanner,.answerList,.panel{background-color:")
-                .append(t.bgCard).append("!important;color:").append(t.text).append("!important;border-color:")
-                .append(t.strokeTransparent).append("!important;}");
-        if (t.dark) {
-            css.append("html[data-etg-max-theme=dark] main,html[data-etg-max-theme=dark] section,html[data-etg-max-theme=dark] form,")
-                    .append("html[data-etg-max-theme=dark] [class*=auth],html[data-etg-max-theme=dark] [class*=Auth],")
-                    .append("html[data-etg-max-theme=dark] [class*=login],html[data-etg-max-theme=dark] [class*=Login],")
-                    .append("html[data-etg-max-theme=dark] [class*=phone],html[data-etg-max-theme=dark] [class*=Phone],")
-                    .append("html[data-etg-max-theme=dark] [class*=container],html[data-etg-max-theme=dark] [class*=Container]{")
-                    .append("background-color:").append(t.bg).append("!important;color:").append(t.text).append("!important;}");
-            css.append("html[data-etg-max-theme=dark] div[style*='255, 255, 255'],html[data-etg-max-theme=dark] section[style*='255, 255, 255'],")
-                    .append("html[data-etg-max-theme=dark] form[style*='255, 255, 255'],html[data-etg-max-theme=dark] article[style*='255, 255, 255'],")
-                    .append("html[data-etg-max-theme=dark] div[style*='#fff'],html[data-etg-max-theme=dark] section[style*='#fff'],")
-                    .append("html[data-etg-max-theme=dark] form[style*='#fff'],html[data-etg-max-theme=dark] article[style*='#fff'],")
-                    .append("html[data-etg-max-theme=dark] div[style*='white'],html[data-etg-max-theme=dark] section[style*='white'],")
-                    .append("html[data-etg-max-theme=dark] form[style*='white'],html[data-etg-max-theme=dark] article[style*='white']{")
-                    .append("background-color:").append(t.bgCard).append("!important;color:").append(t.text).append("!important;}");
-            css.append("html[data-etg-max-theme=dark] input,html[data-etg-max-theme=dark] textarea,html[data-etg-max-theme=dark] [contenteditable=true]{")
-                    .append("background-color:").append(t.bgTertiary).append("!important;color:").append(t.panelText)
-                    .append("!important;border-color:").append(t.strokeTransparent).append("!important;}");
-        }
+                .append("color:").append(t.text).append("!important;}");
+        css.append("html[data-etg-max-theme] body{")
+                .append("background-image:var(--etg-max-wallpaper-layer),var(--etg-max-wallpaper-gradient)!important;")
+                .append("background-size:cover,cover!important;")
+                .append("background-position:center,center!important;")
+                .append("background-repeat:no-repeat,no-repeat!important;")
+                .append("background-attachment:fixed,fixed!important;}");
+        css.append("html[data-etg-max-theme] #app,html[data-etg-max-theme] .app{background-color:transparent!important;}");
+        css.append("html[data-etg-max-theme] input,html[data-etg-max-theme] textarea,html[data-etg-max-theme] [contenteditable=true]{")
+                .append("color:").append(t.panelText)
+                .append("!important;caret-color:").append(t.accent).append("!important;}");
+        css.append("html[data-etg-max-theme] .field::placeholder,html[data-etg-max-theme] input::placeholder,html[data-etg-max-theme] textarea::placeholder{color:")
+                .append(t.hint).append("!important;}");
+        css.append("html[data-etg-max-theme] .button--active,html[data-etg-max-theme] .tab--active,html[data-etg-max-theme] .active-slide,html[data-etg-max-theme] .item--active,html[data-etg-max-theme] .profile--active,html[data-etg-max-theme] .wrapper--selected{color:")
+                .append(t.accent).append("!important;}");
+        css.append("html[data-etg-max-theme] .background.svelte-1afbb1c,")
+                .append("html[data-etg-max-theme] .layer-base.svelte-1afbb1c,")
+                .append("html[data-etg-max-theme] .layer-additional.svelte-1afbb1c,")
+                .append("html[data-etg-max-theme] .layer-pattern.svelte-1afbb1c,")
+                .append("html[data-etg-max-theme] [class*=chat][class*=background],")
+                .append("html[data-etg-max-theme] [class*=Chat][class*=Background],")
+                .append("html[data-etg-max-theme] [class*=message][class*=background],")
+                .append("html[data-etg-max-theme] [class*=Message][class*=Background],")
+                .append("html[data-etg-max-theme] [class*=layer-base],")
+                .append("html[data-etg-max-theme] [class*=layer-additional],")
+                .append("html[data-etg-max-theme] [class*=layer-pattern]{")
+                .append("background-image:var(--etg-max-wallpaper-layer),var(--etg-max-wallpaper-gradient)!important;")
+                .append("background-color:").append(t.wallpaper).append("!important;")
+                .append("background-size:cover,cover!important;")
+                .append("background-position:center,center!important;")
+                .append("background-repeat:no-repeat,no-repeat!important;}");
+        css.append("html[data-etg-max-theme] .container.svelte-fxkkld .message{color:")
+                .append(t.text).append("!important;}");
         css.append(".message.svelte-gl41bh{color:").append(t.outText)
                 .append("!important;background:linear-gradient(239deg,").append(t.outBubble1).append(" 0%,")
                 .append(t.outBubble2).append(" 50%,").append(t.outBubble3).append(" 100%)!important;}");
