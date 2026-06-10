@@ -15,7 +15,7 @@ __id__ = "etg_max"
 __name__ = "MAX Tab"
 __description__ = "Adds a rightmost MAX tab to ExteraGram chat folders and opens web.max.ru in a native WebView."
 __author__ = "@nulls-brawl-site"
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 __icon__ = "msg_plugins"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
@@ -100,7 +100,7 @@ class MaxTabPlugin(BasePlugin):
         Context = self._class_ref("android.content.Context")
         Boolean = jclass("java.lang.Boolean")
         if DialogsActivity is None or Context is None:
-            self._log("MAX Tab: DialogsActivity/Context not found")
+            self._log(f"MAX Tab: class lookup failed DialogsActivity={DialogsActivity is not None} Context={Context is not None}")
             return
         try:
             create_view = DialogsActivity.getDeclaredMethod("createView", Context)
@@ -224,6 +224,18 @@ class MaxTabPlugin(BasePlugin):
         return os.path.join(get_plugins_dir(), __id__)
 
     def _class_ref(self, name):
+        try:
+            ctx = jclass("org.telegram.messenger.ApplicationLoader").applicationContext
+            loader = ctx.getClassLoader()
+            if loader is not None:
+                return loader.loadClass(name)
+        except Exception:
+            pass
+        try:
+            Class = jclass("java.lang.Class")
+            return Class.forName(name)
+        except Exception:
+            pass
         try:
             cls = jclass(name)
             if hasattr(cls, "getDeclaredMethod"):
